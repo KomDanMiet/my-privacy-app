@@ -1,6 +1,4 @@
-"use client";
-import { useSearchParams } from "next/navigation";
-
+// ✅ Server component (geen "use client"; geen hooks nodig)
 const DUMMY_VENDORS = [
   { name: "Google", policy: "https://policies.google.com/privacy" },
   { name: "Meta (Facebook)", policy: "https://www.facebook.com/privacy/policy" },
@@ -9,9 +7,8 @@ const DUMMY_VENDORS = [
   { name: "Quantcast", policy: "https://www.quantcast.com/privacy/" },
 ];
 
-export default function Results() {
-  const searchParams = useSearchParams();
-  const email = searchParams.get("email");
+export default function Results({ searchParams }) {
+  const email = searchParams?.email ?? null;
 
   return (
     <main style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: 760 }}>
