@@ -1,41 +1,55 @@
+// app/api/subscribe/route.js
 import { NextResponse } from "next/server";
-import { getServerClient } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
+import { Resend } from "resend";
 
-// ... bovenin blijven je imports etc.
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 export async function POST(req) {
   try {
-    const { email } = await req.json();
-    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
-      return NextResponse.json({ ok: false, error: "Invalid email" }, { status: 400 });
+    const body = await req.json();
+    const { email } = body;
+
+    console.log("📩 Ontvangen email:", email);
+
+    if (!email) {
+      console.warn("⚠️ Geen email ontvangen!");
+      return NextResponse.json({ ok: false, error: "Email is verplicht" }, { status: 400 });
     }
 
-    // ... jouw Supabase insert + token code hier ...
+    // 1. Opslaan in Supabase
+    const { error: dbError } = await supabase
+      .from("subscribers")
+      .insert({ email });
 
-    const base = process.env.NEXT_PUBLIC_BASE_URL || "https://my-privacy-app.vercel.app";
-    const verifyUrl = `${base}/verify?token=${tok.token}`;
+    if (dbError) {
+      console.error("❌ Supabase fout:", dbError);
+      return NextResponse.json({ ok: false, error: "DB error" }, { status: 500 });
+    }
 
-    // ✅ MAIL
-    const resp = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY || ""}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: "My Privacy App <onboarding@resend.dev>",
-        to: [email],                           // ← alleen jouw eigen mail werkt in test-mode
-        subject: "Bevestig je e-mail",
-        html: `<p>Klik om te bevestigen: <a href="${verifyUrl}">${verifyUrl}</a></p>`,
-      }),
+    console.log("✅ Email opgeslagen in Supabase");
+
+    // 2. Verstuur verificatiemail
+    const resp = await resend.emails.send({
+      from: "maurits.vaneck01@gmail.com",
+      to: email,
+      subject: "Verifieer je email",
+      text: "Klik op deze link om je email te verifiëren: https://my-privacy-app.vercel.app/verify?token=test-token"
     });
 
-    const text = await resp.text();
-    console.log("RESEND ok?", resp.ok, "status:", resp.status, "body:", text);
+    console.log("📨 Resend antwoord:", resp);
 
-    // TIJDELIJK: laat dit terugkomen zodat je het in Network → Response ziet
-    return NextResponse.json({ ok: resp.ok, resendStatus: resp.status, resendBody: text });
+    return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ ok:false, error:e.message }, { status:500 });
+    console.error("🔥 Subscribe route error:", e);
+    return NextResponse.json(
+      { ok: false, error: e.message || "Server error" },
+      { status: 500 }
+    );
   }
 }
