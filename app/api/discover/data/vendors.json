@@ -1,0 +1,17 @@
+[
+  { "name": "Google", "domain": "google.com", "privacyUrl": "https://policies.google.com/privacy", "category": "Big Tech" },
+  { "name": "YouTube", "domain": "youtube.com", "privacyUrl": "https://policies.google.com/privacy", "category": "Big Tech" },
+  { "name": "Meta (Facebook/Instagram)", "domain": "facebook.com", "privacyUrl": "https://www.facebook.com/privacy/policy", "category": "Big Tech" },
+  { "name": "TikTok", "domain": "tiktok.com", "privacyUrl": "https://www.tiktok.com/legal/page/eea/privacy-policy/en", "category": "Social" },
+  { "name": "X (Twitter)", "domain": "twitter.com", "privacyUrl": "https://twitter.com/en/privacy", "category": "Social" },
+  { "name": "LinkedIn", "domain": "linkedin.com", "privacyUrl": "https://www.linkedin.com/legal/privacy-policy", "category": "Social" },
+  { "name": "Snapchat", "domain": "snapchat.com", "privacyUrl": "https://values.snap.com/privacy/privacy-center", "category": "Social" },
+  { "name": "Microsoft", "domain": "microsoft.com", "privacyUrl": "https://privacy.microsoft.com", "category": "Big Tech" },
+  { "name": "Apple", "domain": "apple.com", "privacyUrl": "https://www.apple.com/legal/privacy/", "category": "Big Tech" },
+  { "name": "Amazon", "domain": "amazon.com", "privacyUrl": "https://www.amazon.com/privacy", "category": "E-commerce" },
+  { "name": "Acxiom", "domain": "acxiom.com", "privacyUrl": "https://www.acxiom.com/privacy/us-privacy-policy/", "category": "Data Broker" },
+  { "name": "Oracle (BlueKai)", "domain": "oracle.com", "privacyUrl": "https://www.oracle.com/legal/privacy/", "category": "Adtech" },
+  { "name": "LiveRamp", "domain": "liveramp.com", "privacyUrl": "https://liveramp.com/privacy/", "category": "Data Broker" },
+  { "name": "Experian Marketing", "domain": "experian.com", "privacyUrl": "https://www.experian.com/privacy/consumer-information", "category": "Data Broker" },
+  { "name": "Equifax", "domain": "equifax.com", "privacyUrl": "https://www.equifax.com/privacy/", "category": "Credit/Data" }
+]
