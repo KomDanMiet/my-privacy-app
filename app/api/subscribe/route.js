@@ -22,34 +22,21 @@ export async function POST(req) {
       return NextResponse.json({ ok: false, error: "Email is verplicht" }, { status: 400 });
     }
 
-    // 1. Opslaan in Supabase
-    const { error: dbError } = await supabase
-      .from("subscribers")
-      .insert({ email });
+    // ... after you create verifyUrl and have `email`
+const resp = await fetch("https://api.resend.com/emails", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.RESEND_API_KEY || ""}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    from: "My Privacy App <onboarding@resend.dev>", // keep this in test mode
+    to: [email], // in test mode, must be your own address
+    subject: "Bevestig je e-mail",
+    html: `<p>Klik om te bevestigen: <a href="${verifyUrl}">${verifyUrl}</a></p>`,
+  }),
+});
 
-    if (dbError) {
-      console.error("❌ Supabase fout:", dbError);
-      return NextResponse.json({ ok: false, error: "DB error" }, { status: 500 });
-    }
-
-    console.log("✅ Email opgeslagen in Supabase");
-
-    // 2. Verstuur verificatiemail
-    const resp = await resend.emails.send({
-      from: "maurits.vaneck01@gmail.com",
-      to: email,
-      subject: "Verifieer je email",
-      text: "Klik op deze link om je email te verifiëren: https://my-privacy-app.vercel.app/verify?token=test-token"
-    });
-
-    console.log("📨 Resend antwoord:", resp);
-
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error("🔥 Subscribe route error:", e);
-    return NextResponse.json(
-      { ok: false, error: e.message || "Server error" },
-      { status: 500 }
-    );
-  }
-}
+const text = await resp.text();
+console.log("RESEND ok?", resp.ok, "status:", resp.status, "body:", text);
+return NextResponse.json({ ok: resp.ok, resendStatus: resp.status, resendBody: text });
