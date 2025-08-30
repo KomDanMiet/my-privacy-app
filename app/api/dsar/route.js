@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
  * Request body (JSON):
  * {
  *   "email": "user@example.com",          // required: user's email
- *   "name": "First Last",                 // optional
+ *   "name": "First Last",                 // required: user's name 
  *   "action": "delete" | "compensate",    // required
  *   "company": {                          // required
  *      "name": "Meta (Facebook)",
