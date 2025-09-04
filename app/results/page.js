@@ -1,16 +1,46 @@
 // app/results/page.js
 import DsarButton from "@/components/DsarButton";
 import { redirect } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 
 export default async function Results({ searchParams }) {
   const email = typeof searchParams?.email === "string" ? searchParams.email : "";
   const name  = typeof searchParams?.name  === "string" ? searchParams.name  : "";
 
-  if (!email) {
-    // Geen e-mail → terug naar home
-    redirect("/");
+  if (!email) redirect("/");
+
+  // 🔑 Supabase server client
+  const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // 1) Check of subscriber bestaat & verified is
+  const { data: sub, error } = await supabase
+    .from("subscribers")
+    .select("verified_at")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Supabase error:", error);
+    return (
+      <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
+        ❌ Er ging iets mis. Probeer het later opnieuw.
+      </main>
+    );
   }
 
+  if (!sub || !sub.verified_at) {
+    // ❌ User nog niet verified
+    return (
+      <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
+        ❌ Je moet eerst je e-mail verifiëren voordat je toegang krijgt.  
+        <p>Check je mailbox en klik op de verificatielink.</p>
+      </main>
+    );
+  }
+
+  // 2) ✅ User is verified → bedrijvenlijst ophalen
   const base = process.env.NEXT_PUBLIC_BASE_URL || "";
   const resp = await fetch(`${base}/api/discover`, {
     method: "POST",

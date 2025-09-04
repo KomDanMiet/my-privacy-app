@@ -46,6 +46,21 @@ export async function POST(req) {
       console.error("Insert subscribers error:", upErr);
       // niet blokkeren; we proberen wel door te gaan met verify
     }
+    // excerpt in app/api/subscribe/route.js, vlak na const supabase = createClient(...)
+const { data: existing } = await supabase
+.from('subscribers')
+.select('verified_at, full_name')
+.eq('email', email)
+.maybeSingle();
+
+if (existing?.verified_at) {
+// ✅ al geverifieerd → direct sessie cookie zetten en klaar
+const res = NextResponse.json({ ok: true, alreadyVerified: true, email, name: existing.full_name });
+// zet sessie-cookie
+const { setSessionCookie } = await import('@/lib/session');
+setSessionCookie({ email, name: existing.full_name });
+return res;
+}
 
     // 2) Token aanmaken (verloopt in 30m: zie jouw DDL)
     const { data: tokenRow, error: tokErr } = await supabase
