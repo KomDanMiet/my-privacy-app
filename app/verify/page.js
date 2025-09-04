@@ -79,3 +79,35 @@ export default async function Verify({ searchParams }) {
     </main>
   );
 }
+// ...bovenste deel blijft zoals je nu hebt
+
+// 2) Subscriber markeren als verified
+await supabase
+  .from('subscribers')
+  .update({ verified_at: new Date().toISOString() })
+  .eq('email', row.email);
+
+// Haal de naam op om ‘m door te geven aan /results
+const { data: sub } = await supabase
+  .from('subscribers')
+  .select('full_name')
+  .eq('email', row.email)
+  .maybeSingle();
+
+// 3) Token opruimen
+await supabase.from('verify_tokens').delete().eq('token', token);
+
+const name = sub?.full_name || "";
+
+return (
+  <main style={{ padding: 24, fontFamily: 'sans-serif' }}>
+    ✅ Je e-mail is geverifieerd.<br /><br />
+    <a
+      href={`/results?email=${encodeURIComponent(row.email)}&name=${encodeURIComponent(name)}`}
+      style={{ display:"inline-block", padding:"10px 14px", background:"#0ea5e9", color:"#fff",
+               borderRadius:6, textDecoration:"none" }}
+    >
+      Ga naar mijn resultaten
+    </a>
+  </main>
+);
