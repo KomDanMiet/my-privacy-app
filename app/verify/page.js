@@ -1,37 +1,72 @@
-import { getServerClient } from "@/lib/supabaseServer";
-import Link from "next/link";
+// app/verify/page.js
+import { createClient } from '@supabase/supabase-js';
+
+export const dynamic = 'force-dynamic'; // geen caching
 
 export default async function Verify({ searchParams }) {
-  const token = searchParams?.token;
-  const supa = getServerClient();
-  let msg = "❌ Ongeldige of verlopen verificatielink.";
+  const token = typeof searchParams?.token === 'string' ? searchParams.token : '';
 
-  if (token) {
-    const { data, error } = await supa
-      .from("verify_tokens")
-      .select("email, expires_at")
-      .eq("token", token)
-      .single();
+  // Lees beide mogelijke namen, zodat het nooit stukloopt op naamverschil
+  const SUPABASE_URL =
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const SERVICE_KEY =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY || // fallback
+    process.env.SUPABASE_SECRET;        // fallback
 
-    if (!error && data && new Date(data.expires_at) > new Date()) {
-      // Markeer subscriber als verified
-      await supa
-        .from("subscribers")
-        .update({ verified_at: new Date().toISOString() })
-        .eq("email", data.email);
-
-      // Token opruimen
-      await supa.from("verify_tokens").delete().eq("token", token);
-
-      msg = "✅ Je e-mail is succesvol bevestigd!";
-    }
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    console.error('ENV check', {
+      hasUrl: !!SUPABASE_URL,
+      hasService: !!SERVICE_KEY
+    });
+    throw new Error('Supabase env vars missing');
   }
 
+  if (!token) {
+    return (
+      <main style={{ padding: 24, fontFamily: 'sans-serif' }}>
+        ❌ Ongeldige of ontbrekende verificatielink.
+      </main>
+    );
+  }
+
+  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // 1) Token ophalen
+  const { data: row, error } = await supabase
+    .from('verify_tokens')
+    .select('email, expires_at')
+    .eq('token', token)
+    .maybeSingle();
+
+  if (error || !row) {
+    return (
+      <main style={{ padding: 24, fontFamily: 'sans-serif' }}>
+        ❌ Ongeldige of verlopen verificatielink.
+      </main>
+    );
+  }
+
+  if (new Date(row.expires_at) < new Date()) {
+    return (
+      <main style={{ padding: 24, fontFamily: 'sans-serif' }}>
+        ❌ Verificatielink is verlopen.
+      </main>
+    );
+  }
+
+  // 2) Subscriber markeren als verified
+  await supabase
+    .from('subscribers')
+    .update({ verified_at: new Date().toISOString() })
+    .eq('email', row.email);
+
+  // 3) Token opruimen
+  await supabase.from('verify_tokens').delete().eq('token', token);
+
   return (
-    <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-      <h1>Verificatie</h1>
-      <p>{msg}</p>
-      <p><Link href="/">Ga terug naar home</Link></p>
+    <main style={{ padding: 24, fontFamily: 'sans-serif' }}>
+      ✅ Je e-mail is geverifieerd. Je kunt dit tabblad sluiten.
     </main>
   );
 }
