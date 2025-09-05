@@ -1,27 +1,63 @@
-"use client";
-import { useState } from "react";
+import { useRef, useEffect, useState } from "react";
 
-export default function DsarButton({ email, name, company, action, children }) {
+async function track(dsarId, type, meta) {
+  try {
+    await fetch("/api/dsar/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dsar_id: dsarId, type, meta }),
+    });
+  } catch (_) {}
+}
+
+export default function DsarButton({ email, name, company, action }) {
   const [loading, setLoading] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [reqId, setReqId] = useState(null);
   const [preview, setPreview] = useState(null);
-  const [msg, setMsg] = useState("");
+  const detailsRef = useRef(null);
 
-  async function handleClick() {
+  // Als de gebruiker het "details" blok opent, log event
+  useEffect(() => {
+    const el = detailsRef.current;
+    if (!el) return;
+    const handler = () => {
+      if (el.open && reqId) {
+        track(reqId, "preview_opened", {
+          company: company?.domain || company?.name,
+          action,
+        });
+      }
+    };
+    el.addEventListener("toggle", handler);
+    return () => el.removeEventListener("toggle", handler);
+  }, [reqId, action, company]);
+
+  async function onClick() {
     setLoading(true);
-    setMsg("");
-    setPreview(null);
     try {
-      const r = await fetch("/api/dsar?preview=1", {
+      const r = await fetch("/api/dsar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, company, email, name }),
+        body: JSON.stringify({ email, name, company, action, mode: "preview" }),
       });
-      const j = await r.json();
-      if (!r.ok || !j?.ok) throw new Error(j?.error || "Failed");
-      setPreview(j);
-      setMsg("Preview opgeslagen (status: previewed). Er is niets verstuurd.");
+      const data = await r.json();
+
+      if (!r.ok || !data?.ok) {
+        throw new Error(data?.error || "Kon preview niet opslaan");
+      }
+
+      setPreview({ to: data.to, subject: data.subject, body: data.body });
+      setSaved(true);
+      setReqId(data.id);
+
+      // ⬇️ log event: preview aangemaakt
+      track(data.id, "preview_created", {
+        company: company?.domain || company?.name,
+        action,
+      });
     } catch (e) {
-      setMsg("Mislukt: " + e.message);
+      alert(`Er ging iets mis: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -29,29 +65,27 @@ export default function DsarButton({ email, name, company, action, children }) {
 
   return (
     <div>
-      <button
-        onClick={handleClick}
-        disabled={loading}
-        style={{ padding: "8px 10px", borderRadius: 6, border: "1px solid #444", background: "#111", color: "#eee" }}
-      >
-        {loading ? "Bezig..." : children}
+      <button disabled={loading} onClick={onClick}>
+        {action === "delete" ? "Verwijder mijn data" : "Vraag compensatie"}
       </button>
 
-      {msg && <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>{msg}</div>}
+      {saved && (
+        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
+          Preview opgeslagen (status: <b>previewed</b>). Er is niets verstuurd.
+        </div>
+      )}
 
       {preview && (
-        <details style={{ marginTop: 8 }}>
+        <details ref={detailsRef} style={{ marginTop: 8 }}>
           <summary>Bekijk wat er verstuurd zóu worden</summary>
-          <div style={{ marginTop: 8, padding: 10, border: "1px solid #333", borderRadius: 6 }}>
-            <div><b>To:</b> {preview.to}</div>
-            <div><b>Subject:</b> {preview.subject}</div>
-            <div style={{ marginTop: 8 }}>
-              <b>Body:</b>
-              <div
-                style={{ marginTop: 6, background: "#0b0b0b", padding: 10, borderRadius: 6 }}
-                dangerouslySetInnerHTML={{ __html: preview.html }}
-              />
-            </div>
+          <div style={{ whiteSpace: "pre-wrap", fontFamily: "monospace", marginTop: 8 }}>
+            <b>To:</b> {preview.to}
+            {"\n"}
+            <b>Subject:</b> {preview.subject}
+            {"\n\n"}
+            <b>Body:</b>
+            {"\n"}
+            {preview.body}
           </div>
         </details>
       )}
