@@ -1,142 +1,114 @@
 // app/api/dsar/route.js
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
-/**
- * ENV expected (Vercel → Project → Settings → Environment Variables):
- * - RESEND_API_KEY = re_********
- * - RESEND_FROM    = noreply@yourdomain.com   (leeg laten = testmodus via onboarding@resend.dev)
- *
- * Request body (JSON):
- * {
- *   "email": "user@example.com",          // required: user's email
- *   "name": "First Last",                 // required: user's name 
- *   "action": "delete" | "compensate",    // required
- *   "company": {                          // required
- *      "name": "Meta (Facebook)",
- *      "domain": "facebook.com",
- *      "privacyEmail": "privacy@support.facebook.com" // optional
- *   }
- * }
- *
- * Response:
- * { ok: boolean, sentTo: string, mode: "company" | "preview", note?: string }
- */
+function buildDsarEmail({ action, company, email, name }) {
+  const to = company?.dpoEmail
+    ? company.dpoEmail
+    : `privacy@${company?.domain || "example.com"}`;
 
-// ---------- helpers ----------
-function resolveCompanyEmail(company) {
-  if (!company) return null;
-  if (company.privacyEmail) return company.privacyEmail;
-  if (company.domain) return `privacy@${company.domain}`;
-  return null;
-}
+  const subject =
+    action === "delete"
+      ? "Data deletion request under GDPR (Art. 17)"
+      : "Data access/compensation request under GDPR";
 
-function buildSubject({ company, action }) {
-  const base =
-    action === "compensate"
-      ? "Request for compensation regarding personal data"
-      : "Request for deletion of personal data";
-  return `${base} – ${company?.name || "Data Controller"}`;
-}
-
-function buildEmailBody({ email, name, company, action }) {
   const lines = [
     `Dear ${company?.name || "Data Protection Officer"},`,
     "",
-    "Under the General Data Protection Regulation (GDPR), I am exercising my rights as a data subject.",
-    "",
-    "I request the following:",
-    "1) Access to all personal data you process about me, including purposes of processing, categories of data, recipients/third parties, and retention periods.",
-    action === "compensate"
-      ? "2) If you intend to continue processing my personal data, please provide an appropriate compensation proposal in return for my (renewed) consent."
-      : "2) If there is no lawful basis for processing, I request the immediate deletion of my personal data.",
-    "",
-    "Important:",
-    action === "compensate"
-      ? "- If no appropriate compensation proposal is provided, I expect deletion in accordance with Article 17 GDPR."
-      : "- This request is free of charge and you are required to comply under the GDPR.",
+    "I am exercising my rights under the GDPR.",
+    action === "delete"
+      ? "Please delete all personal data you hold about me and confirm in writing."
+      : "Please provide access to all personal data you process about me, including purposes, recipients and retention. If you wish to continue processing, I request a fair compensation proposal for my renewed consent.",
     "",
     `Email address: ${email}`,
-    name ? `Name: ${name}` : null,
+    name ? `Full name: ${name}` : null,
     "",
-    "Please respond within the statutory period of 30 days.",
+    "Please respond within 30 days as required by the GDPR.",
     "",
     "Kind regards,",
     name || "(Your name)",
   ].filter(Boolean);
 
-  return lines.join("\n");
+  const html = `<div style="font-family:system-ui,Segoe UI,Roboto,Arial">
+    ${lines.map(p => `<p>${p.replace(/\n/g, "<br/>")}</p>`).join("")}
+  </div>`;
+
+  return { to, subject, html };
 }
 
-// ---------- route ----------
 export async function POST(req) {
   try {
-    const { email, name, action, company } = await req.json();
+    const url = new URL(req.url);
+    const preview = url.searchParams.get("preview") === "1";
 
-    // basic validation
-    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
-      return NextResponse.json({ ok: false, error: "Invalid email" }, { status: 400 });
+    const { action, company, email, name } = await req.json();
+    if (!["delete","compensate"].includes(action)) {
+      return NextResponse.json({ ok:false, error:"Invalid action" }, { status:400 });
     }
-    if (!company || (!company.name && !company.domain)) {
-      return NextResponse.json({ ok: false, error: "Company missing" }, { status: 400 });
-    }
-    if (!["delete", "compensate"].includes(action)) {
-      return NextResponse.json({ ok: false, error: "Invalid action" }, { status: 400 });
+    if (!company || !email) {
+      return NextResponse.json({ ok:false, error:"Missing company/email" }, { status:400 });
     }
 
-    // Resend config
-    const apiKey = process.env.RESEND_API_KEY || "";
-    if (!apiKey) {
-      return NextResponse.json({ ok: false, error: "Missing RESEND_API_KEY" }, { status: 500 });
+    const { to, subject, html } = buildDsarEmail({ action, company, email, name });
+
+    // DB (server role)
+    const SUPABASE_URL =
+      process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SERVICE_KEY =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.SUPABASE_SERVICE_KEY ||
+      process.env.SUPABASE_SECRET;
+
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      return NextResponse.json({ ok:false, error:"Supabase env missing" }, { status:500 });
     }
+    const db = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    const configuredFrom = (process.env.RESEND_FROM || "").trim();
-    const from =
-      configuredFrom || "My Privacy App <onboarding@resend.dev>"; // testmodus afzender
-
-    const isTestMode = from.includes("onboarding@resend.dev");
-    const companyEmail = resolveCompanyEmail(company);
-
-    // In testmodus: stuur naar de gebruiker zelf (preview).
-    // In productie: stuur naar het bedrijf; fallback naar gebruiker als geen adres gevonden.
-    const to = isTestMode ? email : (companyEmail || email);
-    const mode = isTestMode ? "preview" : companyEmail ? "company" : "preview";
-
-    const subject = buildSubject({ company, action });
-    const text = buildEmailBody({ email, name, company, action });
-
-    // send via Resend REST (zonder SDK)
-    const resp = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: [to],
+    // 1) Altijd loggen (status = previewed)
+    const { data: row, error: insErr } = await db
+      .from("dsar_requests")
+      .insert({
+        email,
+        full_name: name ?? null,
+        company_name: company.name || null,
+        company_domain: company.domain || null,
+        action,
+        to_address: to,
         subject,
-        text,
-      }),
-    });
+        html,
+        status: "previewed"
+      })
+      .select("*")
+      .single();
 
-    const body = await resp.text();
-    console.log("DSAR SEND:", { to, mode, status: resp.status, ok: resp.ok, body });
-
-    if (!resp.ok) {
-      return NextResponse.json(
-        { ok: false, error: "send_failed", details: { status: resp.status, body } },
-        { status: 500 }
-      );
+    if (insErr) {
+      console.error("dsar insert error", insErr);
+      return NextResponse.json({ ok:false, error:"Could not log DSAR" }, { status:500 });
     }
 
-    const note =
-      mode === "preview"
-        ? "Test mode: message sent to the user (not the company). Set RESEND_FROM with a verified domain to send directly to companies."
-        : undefined;
+    // 2) Als we alleen willen PREVIEWEN (geen verzending)
+    //    (Vandaag: altijd; DSAR_SEND staat op false)
+    const SEND = String(process.env.DSAR_SEND || "").toLowerCase() === "true";
+    if (!SEND || preview) {
+      return NextResponse.json({
+        ok: true,
+        mode: "preview",
+        requestId: row.id,
+        to,
+        subject,
+        html
+      });
+    }
 
-    return NextResponse.json({ ok: true, sentTo: to, mode, note });
+    // (Later) verzend-code hier plaatsen als DSAR_SEND=true
+    // Voor vandaag NIET uitvoeren.
+    return NextResponse.json({
+      ok:true,
+      mode:"noop",
+      requestId: row.id
+    });
   } catch (e) {
-    console.error("DSAR error:", e);
-    return NextResponse.json({ ok: false, error: e.message || "Server error" }, { status: 500 });
+    console.error("dsar error", e);
+    return NextResponse.json({ ok:false, error: e.message }, { status:500 });
   }
 }

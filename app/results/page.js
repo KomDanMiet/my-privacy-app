@@ -1,7 +1,11 @@
 // app/results/page.js
-import DsarButton from "@/components/DsarButton";
 import { redirect } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
+
+// componenten
+import DsarButton from "@/components/DsarButton";
+import DsarList from "@/components/DsarList";
+import VerifyGate from "@/components/VerifyGate";
 
 export default async function Results({ searchParams }) {
   const email = typeof searchParams?.email === "string" ? searchParams.email : "";
@@ -9,9 +13,19 @@ export default async function Results({ searchParams }) {
 
   if (!email) redirect("/");
 
-  // 🔑 Supabase server client
+  // --- Supabase server client ---
   const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    console.error("Missing Supabase envs");
+    return (
+      <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
+        ❌ Server misconfiguratie. Neem contact op met support.
+      </main>
+    );
+  }
+
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
   // 1) Check of subscriber bestaat & verified is
@@ -34,8 +48,12 @@ export default async function Results({ searchParams }) {
     // ❌ User nog niet verified
     return (
       <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-        ❌ Je moet eerst je e-mail verifiëren voordat je toegang krijgt.  
+        <h2>Verificatie vereist</h2>
+        <p>Je moet eerst je e-mail verifiëren voordat je toegang krijgt tot de resultaten.</p>
         <p>Check je mailbox en klik op de verificatielink.</p>
+
+        {/* Knop om direct opnieuw te checken zonder formulier opnieuw in te vullen */}
+        <VerifyGate email={email} name={name} />
       </main>
     );
   }
@@ -49,7 +67,7 @@ export default async function Results({ searchParams }) {
     cache: "no-store",
   });
 
-  const data = await resp.json();
+  const data = await resp.json().catch(() => ({}));
   const companies = data?.companies || [];
 
   return (
@@ -87,6 +105,9 @@ export default async function Results({ searchParams }) {
           </div>
         ))
       )}
+
+      {/* Mini-overzicht met alle gelogde verzoeken */}
+      <DsarList email={email} />
     </main>
   );
 }
