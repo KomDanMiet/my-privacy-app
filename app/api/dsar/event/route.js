@@ -17,9 +17,17 @@ export async function POST(req) {
     }
 
     const supabase = createClient(url, key);
+
+    const payload = {
+      dsar_id,
+      type,
+      // ✅ stringify zodat het altijd wegschrijft, ook als je kolom TEXT is
+      meta: meta ? JSON.stringify(meta) : null,
+    };
+
     const { data, error } = await supabase
       .from("dsar_events")
-      .insert({ dsar_id, type, meta: meta ?? {} })
+      .insert(payload)
       .select("id, created_at")
       .single();
 

@@ -3,7 +3,6 @@
 
 import { useRef, useEffect, useState } from "react";
 
-// kleine helper om events te loggen naar /api/dsar/event
 async function track(dsarId, type, meta) {
   try {
     await fetch("/api/dsar/event", {
@@ -19,15 +18,12 @@ async function track(dsarId, type, meta) {
 export default function DsarButton({ email, name, company, action }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
   const detailsRef = useRef(null);
 
-  // wanneer details open gaat en we hebben een id -> event loggen
   useEffect(() => {
-    if (open && preview?.id) {
-      track(preview.id, "preview_opened");
-    }
-  }, [open, preview?.id]);
+    if (open && result?.id) track(result.id, "preview_opened");
+  }, [open, result?.id]);
 
   async function handleClick() {
     setLoading(true);
@@ -35,24 +31,16 @@ export default function DsarButton({ email, name, company, action }) {
       const resp = await fetch("/api/dsar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          name,
-          company,
-          action,
-          mode: "preview", // we sturen nog NIET echt
-        }),
+        body: JSON.stringify({ email, name, company, action }),
       });
       const data = await resp.json();
-      if (!resp.ok || !data?.ok) {
-        throw new Error(data?.error || "Kon preview niet opslaan");
-      }
-      setPreview(data);
+      if (!resp.ok || !data?.ok) throw new Error(data?.error || "Kon verzoek niet opslaan");
+      setResult(data);
       setOpen(true);
-      await track(data.id, "preview_created");
+      await track(data.id, data.status === "sent" ? "sent" : "preview_created");
     } catch (e) {
       console.error(e);
-      alert(`Kon preview niet opslaan: ${e.message}`);
+      alert(`Kon verzoek niet opslaan: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -73,21 +61,20 @@ export default function DsarButton({ email, name, company, action }) {
           cursor: "pointer",
         }}
       >
-        {loading
-          ? "Bezig..."
-          : action === "delete"
-          ? "Verwijder mijn data"
-          : "Vraag compensatie"}
+        {loading ? "Bezig..." : action === "delete" ? "Verwijder mijn data" : "Vraag compensatie"}
       </button>
 
-      {preview && (
+      {result && (
         <details
           ref={detailsRef}
           open={open}
           onToggle={(e) => setOpen(e.currentTarget.open)}
           style={{ marginTop: 8 }}
         >
-          <summary>Bekijk wat er verstuurd zóu worden</summary>
+          <summary>
+            {result.status === "sent" ? "✅ Verstuurd — bekijk details" : "📄 Preview — bekijk details"}
+          </summary>
+
           <div
             style={{
               marginTop: 8,
@@ -98,18 +85,23 @@ export default function DsarButton({ email, name, company, action }) {
               whiteSpace: "pre-wrap",
             }}
           >
-            <div>
-              <b>To:</b> {preview.to}
-            </div>
-            <div>
-              <b>Subject:</b> {preview.subject}
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <b>Body:</b>
-            </div>
-            <pre style={{ whiteSpace: "pre-wrap" }}>{preview.body}</pre>
+            <div><b>To:</b> {result.to}</div>
+            {result.replyTo ? <div><b>Reply-To:</b> {result.replyTo}</div> : null}
+            <div><b>Subject:</b> {result.subject}</div>
+            <div style={{ marginTop: 8 }}><b>Body:</b></div>
+
+            {/* 👉 Toon HTML als die er is, anders tekst */}
+            {result.html ? (
+              <div
+                style={{ whiteSpace: "normal", fontFamily: "system-ui, Segoe UI, Roboto, Helvetica, Arial" }}
+                dangerouslySetInnerHTML={{ __html: result.html }}
+              />
+            ) : (
+              <pre style={{ whiteSpace: "pre-wrap" }}>{result.body || "(geen body)"}</pre>
+            )}
+
             <div style={{ marginTop: 8, opacity: 0.8 }}>
-              Preview opgeslagen (<i>status: {preview.status}</i>). Er is niets verstuurd.
+              Status: <i>{result.status || "previewed"}</i> ({result.mode})
             </div>
           </div>
         </details>
