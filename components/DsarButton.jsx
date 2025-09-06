@@ -1,25 +1,46 @@
+// components/DsarButton.jsx
 "use client";
 
-import { useState } from "react";
+import { useRef, useEffect, useState } from "react";
 
-export default function DsarButton({ email, company, action = "delete", children }) {
+async function track(dsarId, type, meta) {
+  try {
+    await fetch("/api/dsar/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dsar_id: dsarId, type, meta }),
+    });
+  } catch (e) {
+    console.warn("track event failed", e);
+  }
+}
+
+export default function DsarButton({ email, name, company, action }) {
+  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [result, setResult] = useState(null);
+  const detailsRef = useRef(null);
 
-  async function send() {
+  useEffect(() => {
+    if (open && result?.id) track(result.id, "preview_opened");
+  }, [open, result?.id]);
+
+  async function handleClick() {
+    setLoading(true);
     try {
-      setLoading(true);
-      setMsg("");
-      const res = await fetch("/api/dsar", {
+      const resp = await fetch("/api/dsar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, company, action }),
+        body: JSON.stringify({ email, name, company, action }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "Versturen mislukt");
-      setMsg(`✅ Verzonden naar: ${data.sentTo}${data.mode === "preview" ? " (preview)" : ""}`);
+      const data = await resp.json();
+      if (!resp.ok || !data?.ok) throw new Error(data?.error || "Kon verzoek niet opslaan");
+      setResult(data);
+      setOpen(true);
+      await track(data.id, data.status === "sent" ? "sent" : "preview_created");
     } catch (e) {
-      setMsg(`❌ Fout: ${e.message}`);
+      console.error(e);
+      alert(`Kon verzoek niet opslaan: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -27,10 +48,64 @@ export default function DsarButton({ email, company, action = "delete", children
 
   return (
     <div>
-      <button onClick={send} disabled={loading} style={{ padding: "6px 10px" }}>
-        {loading ? "Versturen..." : children}
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={loading}
+        style={{
+          padding: "8px 12px",
+          borderRadius: 6,
+          border: "1px solid #444",
+          background: "#18181b",
+          color: "#e5e7eb",
+          cursor: "pointer",
+        }}
+      >
+        {loading ? "Bezig..." : action === "delete" ? "Verwijder mijn data" : "Vraag compensatie"}
       </button>
-      {msg && <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>{msg}</div>}
+
+      {result && (
+        <details
+          ref={detailsRef}
+          open={open}
+          onToggle={(e) => setOpen(e.currentTarget.open)}
+          style={{ marginTop: 8 }}
+        >
+          <summary>
+            {result.status === "sent" ? "✅ Verstuurd — bekijk details" : "📄 Preview — bekijk details"}
+          </summary>
+
+          <div
+            style={{
+              marginTop: 8,
+              border: "1px solid #333",
+              borderRadius: 6,
+              padding: 12,
+              fontFamily: "monospace",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            <div><b>To:</b> {result.to}</div>
+            {result.replyTo ? <div><b>Reply-To:</b> {result.replyTo}</div> : null}
+            <div><b>Subject:</b> {result.subject}</div>
+            <div style={{ marginTop: 8 }}><b>Body:</b></div>
+
+            {/* 👉 Toon HTML als die er is, anders tekst */}
+            {result.html ? (
+              <div
+                style={{ whiteSpace: "normal", fontFamily: "system-ui, Segoe UI, Roboto, Helvetica, Arial" }}
+                dangerouslySetInnerHTML={{ __html: result.html }}
+              />
+            ) : (
+              <pre style={{ whiteSpace: "pre-wrap" }}>{result.body || "(geen body)"}</pre>
+            )}
+
+            <div style={{ marginTop: 8, opacity: 0.8 }}>
+              Status: <i>{result.status || "previewed"}</i> ({result.mode})
+            </div>
+          </div>
+        </details>
+      )}
     </div>
   );
 }
