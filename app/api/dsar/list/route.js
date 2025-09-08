@@ -17,7 +17,7 @@ export async function GET(req) {
 
   const { data, error } = await db
     .from("dsar_requests")
-    .select("id, created_at, company_name, company_domain, action, status, to_address, subject")
+    .select("id, created_at, company_name, company_domain, action, status, to, subject")
     .eq("email", email)
     .order("created_at", { ascending: false });
 
