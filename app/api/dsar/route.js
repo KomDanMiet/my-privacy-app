@@ -143,22 +143,25 @@ const insertRow = {
   company_domain: company?.domain || null,
   company_name: company?.name || null,
   action,                 // 'delete' | 'compensate'
-  to,                     // bv. 'privacy@google.com'
+  to,                     // bv. 'privacy@youtube.com'
   subject,                // onderwerp
-  body,                   // plain-text versie (altijd aanwezig)
+  body,                   // plain text
   html: `<div style="font-family:system-ui,Segoe UI,Roboto,Arial">
            ${body
              .split("\n")
              .map((line) => `<p>${line.replace(/</g, "&lt;")}</p>`)
              .join("")}
-         </div>`,         // ✅ simpele HTML-versie (voorkomt NOT NULL fout)
-  status: "previewed",    // default status
-  provider: null,         // wordt pas gevuld als je écht verstuurt
-  provider_id: null,      // idem
-  sent_at: null,          // idem
-  last_error: null,       // idem
-  last_error_body: null,  // idem
-  ip,                     // client IP (handig voor abuse/analyse)
+         </div>`,
+  status: "previewed",
+
+  // ✅ NIEUW: vul provider in bij preview
+  provider: "preview",          // <— belangrijk, kolom is NOT NULL bij jou
+  provider_id: null,
+  sent_at: null,
+  last_error: null,
+  last_error_body: null,
+
+  ip,
 };
 
 const { data: ins, error: insErr } = await supabase
@@ -171,8 +174,8 @@ if (insErr) {
   console.error("insert dsar_requests error:", insErr);
   throw insErr;
 }
-
 const dsarId = ins.id;
+  
     // ---- send/preview gate ----
     let MODE = (process.env.DSAR_SEND_MODE || "preview").toLowerCase(); // "preview" | "live"
     const isProd = process.env.VERCEL_ENV === "production";
