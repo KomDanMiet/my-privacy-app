@@ -136,27 +136,43 @@ export async function POST(req) {
     }
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // ---- log request (altijd eerst previewed) ----
-    const { data: ins, error: insErr } = await supabase
-      .from("dsar_requests")
-      .insert({
-        email: safeEmail,
-        full_name: safeName || null,
-        company_domain: company?.domain || null,
-        company_name: company?.name || null,
-        action,
-        to,
-        subject,
-        body,
-        status: "previewed",
-        ip,
-      })
-      .select("id, created_at, status")
-      .single();
-    if (insErr) throw insErr;
+    // ---- Supabase: DSAR opslaan (altijd eerst als 'previewed') ----
+const insertRow = {
+  email: safeEmail,
+  full_name: safeName || null,
+  company_domain: company?.domain || null,
+  company_name: company?.name || null,
+  action,                 // 'delete' | 'compensate'
+  to,                     // bv. 'privacy@google.com'
+  subject,                // onderwerp
+  body,                   // plain-text versie (altijd aanwezig)
+  html: `<div style="font-family:system-ui,Segoe UI,Roboto,Arial">
+           ${body
+             .split("\n")
+             .map((line) => `<p>${line.replace(/</g, "&lt;")}</p>`)
+             .join("")}
+         </div>`,         // ✅ simpele HTML-versie (voorkomt NOT NULL fout)
+  status: "previewed",    // default status
+  provider: null,         // wordt pas gevuld als je écht verstuurt
+  provider_id: null,      // idem
+  sent_at: null,          // idem
+  last_error: null,       // idem
+  last_error_body: null,  // idem
+  ip,                     // client IP (handig voor abuse/analyse)
+};
 
-    const dsarId = ins.id;
+const { data: ins, error: insErr } = await supabase
+  .from("dsar_requests")
+  .insert(insertRow)
+  .select("id, created_at, status")
+  .single();
 
+if (insErr) {
+  console.error("insert dsar_requests error:", insErr);
+  throw insErr;
+}
+
+const dsarId = ins.id;
     // ---- send/preview gate ----
     let MODE = (process.env.DSAR_SEND_MODE || "preview").toLowerCase(); // "preview" | "live"
     const isProd = process.env.VERCEL_ENV === "production";
