@@ -115,10 +115,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4) versturen met Resend (let op: geldig From-adres!)
+    // 4) versturen met Resend (camelCase replyTo!)
     const FROM =
       process.env.RESEND_FROM || "My Privacy App <dsar@discodruif.com>";
-    // Zorg dat het domein (discodruif.com) is geverifieerd in Resend.
+    // Verifieer dit domein in Resend (SPF/DKIM/DMARC).
 
     const { data, error: sendErr } = await resend.emails.send({
       from: FROM,
@@ -126,7 +126,7 @@ export async function POST(req: Request) {
       subject,
       html: html ?? undefined,
       text: text ?? undefined,
-      reply_to: replyTo ?? undefined,
+      replyTo: replyTo ?? undefined, // <-- fix hier
       headers: { "X-App": "my-privacy-app", "X-DSAR-Domain": d },
     });
 
