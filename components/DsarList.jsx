@@ -37,7 +37,7 @@ export default function DsarList({ email }) {
               <div style={{ fontSize: 12, opacity: 0.85 }}>
                 {new Date(it.created_at).toLocaleString()} • Action: {it.action} • Status: <b>{it.status}</b>
               </div>
-              <div style={{ fontSize: 12 }}>To: {it.to_address}</div>
+              <div style={{ fontSize: 12 }}>To: {it.to}</div>
               <div style={{ fontSize: 12 }}>Subject: {it.subject}</div>
             </div>
           ))}
