@@ -1,45 +1,57 @@
 // app/api/dsar/send/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY!);
-
-// Helper: contact ophalen via jouw lookup-endpoint
-async function getContact(domain: string, force = false) {
-  const base = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-  const url = `${base}/api/contact/lookup?domain=${encodeURIComponent(domain)}${force ? "&force=1" : ""}`;
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(`Lookup failed (${r.status})`);
-  return r.json(); // { ok, domain, contact }
+/* ---------- helpers ---------- */
+function normDomain(input: string) {
+  let d = (input || "").trim().toLowerCase();
+  d = d.replace(/^mailto:/, "");
+  if (d.includes("@")) d = d.split("@")[1];             // e-mail -> domein
+  d = d.replace(/^https?:\/\//, "").split("/")[0];      // URL -> host
+  d = d.replace(/^www\./, "");
+  return d;
 }
 
-// Helper: bepalen of we veilig mogen mailen
+function min(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
+}
+
 function shouldEmail(contact: any) {
   if (!contact) return false;
-  const conf = contact.confidence ?? 0;
-  const typeOk = contact.contact_type === "email";
-  const confOk = conf >= 60;
-
-  const COOL_DOWN_DAYS = 30;
-  const bouncedRecently =
+  const MIN_CONF = Number(process.env.DSAR_MIN_CONF ?? 60);
+  const COOL_DOWN_DAYS = Number(process.env.DSAR_BOUNCE_COOLDOWN_DAYS ?? 30);
+  const confOk = (contact.confidence ?? 0) >= MIN_CONF;
+  const recentBounce =
     !!contact.last_bounce_at &&
     Date.now() - new Date(contact.last_bounce_at).getTime() <
       COOL_DOWN_DAYS * 24 * 60 * 60 * 1000;
-
-  return typeOk && confOk && !bouncedRecently;
+  return contact.contact_type === "email" && confOk && !recentBounce;
 }
+
+async function getContact(domain: string, force = false) {
+  const base = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+  const url = `${base}/api/contact/lookup?domain=${encodeURIComponent(domain)}${
+    force ? "&force=1" : ""
+  }`;
+  const r = await fetch(url, { cache: "no-store" });
+  const j = await r.json().catch(() => ({}));
+  return j as {
+    ok: boolean;
+    error?: string;
+    contact?: any;
+  };
+}
+/* ---------------------------- */
+
+const resend = new Resend(process.env.RESEND_API_KEY || "");
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const {
-      domain,
-      subject,
-      html,
-      text,
-      replyTo,
-      toOverride, // optioneel: forceer een testadres
-    } = body || {};
+    const body = await req.json().catch(() => ({}));
+    const { domain, subject, html, text, replyTo, toOverride } = body || {};
 
     if (!domain || !subject || !(html || text)) {
       return NextResponse.json(
@@ -48,84 +60,99 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Contact ophalen uit cache
-    const first = await getContact(domain, false);
-    if (!first.ok) {
-      return NextResponse.json({ ok: false, error: "Lookup error" }, { status: 502 });
-    }
-    let contact = first.contact;
-
-    // 2) Beslissen: mailen of fallback
-    const forceEmailTo = toOverride as string | undefined;
-    const allowEmail = forceEmailTo ? true : shouldEmail(contact);
-
-    // 3) Als mailen niet is toegestaan, force refresh (misschien is er een formulier)
-    if (!allowEmail) {
-      const refreshed = await getContact(domain, true);
-      if (refreshed.ok && refreshed.contact) {
-        contact = refreshed.contact;
-      }
-
-      // Formulier gevonden? -> fallback
-      if (contact?.contact_type === "form" && contact?.value) {
-        return NextResponse.json({
-          ok: true,
-          channel: "form",
-          url: contact.value,
-          domain,
-        });
-      }
-
-      // Nog steeds geen betrouwbare e-mail? -> stoppen
-      if (!forceEmailTo) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "No reliable contact found",
-            hint:
-              "Geen valide e-mailkanaal met voldoende confidence of recent gebounced. Toon het formulier als dat er is of vraag om handmatig contact.",
-            contact,
-          },
-          { status: 404 }
-        );
-      }
+    const d = normDomain(domain);
+    if (!d || !d.includes(".")) {
+      return NextResponse.json({ ok: false, error: "Invalid domain" }, { status: 400 });
     }
 
-    // 4) E-mailpad (via override of betrouwbare e-mail uit lookup)
+    // 1) contact uit cache
+    let { ok, contact, error } = await getContact(d, false);
+    if (!ok) return NextResponse.json({ ok: false, error: error || "Lookup failed" }, { status: 502 });
+
+    // 2) beslis: mailen of refresh/fallback
+    const forceEmailTo = (toOverride as string) || undefined;
+    let decidedChannel: "email" | "form" | "none" = "none";
+
+    // Als we (nog) niet mogen mailen → force refresh
+    if (!forceEmailTo && !shouldEmail(contact)) {
+      const refreshed = await getContact(d, true);
+      if (refreshed.ok) contact = refreshed.contact;
+    }
+
+    if (!forceEmailTo && contact?.contact_type === "form" && contact?.value) {
+      decidedChannel = "form";
+      return NextResponse.json({
+        ok: true,
+        channel: "form",
+        url: contact.value,
+        domain: d,
+      });
+    }
+
+    // 3) e-mailpad
     const to =
       forceEmailTo ||
-      (contact?.contact_type === "email" ? (contact?.value as string) : undefined);
+      (contact?.contact_type === "email" ? (contact.value as string) : undefined);
 
     if (!to) {
       return NextResponse.json(
-        { ok: false, error: "No destination email available" },
-        { status: 400 }
+        {
+          ok: false,
+          error: "No reliable contact found",
+          hint:
+            "Geen valide e-mailkanaal met voldoende confidence of recent gebounced. Toon het formulier als dat er is of vraag om handmatig contact.",
+          contact,
+        },
+        { status: 404 }
       );
     }
 
-    const resp = await resend.emails.send({
-      from: "My Privacy App <dsar@jouwdomein.nl>", // stuur vanaf je geverifieerde domein
+    // privacy@ guard (alleen toestaan als die echt uit een high-confidence lookup komt)
+    const isPrivacyGuess = to.toLowerCase().startsWith("privacy@");
+    const fromLookupHighConf =
+      contact?.contact_type === "email" && (contact?.confidence ?? 0) >= Number(process.env.DSAR_MIN_CONF ?? 60);
+
+    if (!forceEmailTo && isPrivacyGuess && !fromLookupHighConf) {
+      return NextResponse.json(
+        { ok: false, error: "Blocked unsafe fallback address (privacy@) without high-confidence lookup." },
+        { status: 409 }
+      );
+    }
+
+    decidedChannel = forceEmailTo ? "email" : "email";
+
+    // 4) versturen met Resend
+    const FROM =
+      process.env.RESEND_FROM ||
+      "My Privacy App <dsar@example.com>"; // zorg dat dit geverifieerd is in Resend
+    const sendResp = await resend.emails.send({
+      from: FROM,
       to,
       subject,
       html: html ?? undefined,
-      text: text ?? "Plain-text fallback.",
+      text: text ?? undefined,
       replyTo: replyTo ?? undefined,
-      headers: { "X-App": "my-privacy-app" },
+      headers: { "X-App": "my-privacy-app", "X-DSAR-Domain": d },
     });
 
-    // Let op: bounces worden door je webhook verwerkt
+    console.log("[DSAR_SEND]", {
+      domain: d,
+      decided: decidedChannel,
+      to,
+      confidence: contact?.confidence ?? null,
+      last_bounce_at: contact?.last_bounce_at ?? null,
+      id: (sendResp as any)?.id ?? null,
+    });
+
     return NextResponse.json({
       ok: true,
       channel: "email",
-      id: resp?.data?.id,
+      id: (sendResp as any)?.id ?? null,
       to,
-      domain,
+      domain: d,
     });
   } catch (e: any) {
     console.error("DSAR send error:", e);
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? "Unknown" },
-      { status: 500 }
-    );
-  }
+    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown" }, { status: 500 });
+    }
 }
