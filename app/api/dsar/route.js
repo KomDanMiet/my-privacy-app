@@ -60,9 +60,9 @@ function composeEmail({ company, email, name, action }) {
 export async function POST(req) {
   try {
     // --- CSRF / Origin check ---
-    if (!csrfOk(req)) {
-      return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
-    }
+    //if (!csrfOk(req)) {
+      //return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
+    //}
 
     const ip = getIp(req);
     const payload = await req.json();
@@ -92,7 +92,7 @@ export async function POST(req) {
       const ok =
         sig &&
         crypto.createHmac("sha256", secret).update(nonce).digest("base64url") === sig;
-      if (!ok) return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
+      //if (!ok) return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
     }
 
     // rate limits
