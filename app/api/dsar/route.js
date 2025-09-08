@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   rlIpMinute, rlIpDay, rlEmailDay, rlUserCompanyDay,
   isBanned, rateLimitResponse
-} from "@/lib/ratelimit";
+} from "@/lib/ratelimit.js";
 import crypto from "crypto";
 
 function getIp(req) {

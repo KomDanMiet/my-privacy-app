@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import {
   rlIpMinute, rlIpDay, rlEmailDay, isBanned, rateLimitResponse,
-} from "@/lib/ratelimit";
+} from "@/lib/ratelimit.js";
 
 function htmlEmail({ verifyUrl }) {
   return `
