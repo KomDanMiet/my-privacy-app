@@ -22,7 +22,7 @@ const trunc = (s, n) => (s || "").toString().slice(0, n);
 function buildToAddress(company) {
   const dom = norm(company?.domain);
   if (!dom) return null;
-  // TODO: vervangen door vendors-lookup (per leverancier juist adres)
+  // TODO: vervangen door vendors-lookup
   return `privacy@${dom}`;
 }
 
@@ -55,7 +55,7 @@ function composeEmail({ company, email, name, action }) {
 /* --------------------------------------------------- */
 
 export async function POST(req) {
-  // ---- optionele CSRF/origin check (toggle met ENABLE_CSRF=1) ----
+  // Optionele CSRF/origin check
   if (process.env.ENABLE_CSRF === "1" && !csrfOk(req)) {
     return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
   }
@@ -65,13 +65,13 @@ export async function POST(req) {
     const payload = await req.json().catch(() => ({}));
     const { email, name, company, action, honeypot, csrf } = payload || {};
 
-    // ---- honeypot + banlist ----
+    // Honeypot + banlist
     if (honeypot) return rateLimitResponse({ reason: "honeypot" });
     if (await isBanned(ip) || (email && (await isBanned(norm(email))))) {
       return rateLimitResponse({ reason: "banned" });
     }
 
-    // ---- basisvalidatie ----
+    // Basisvalidatie
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
       return NextResponse.json({ ok: false, error: "Invalid email" }, { status: 400 });
     }
@@ -82,7 +82,7 @@ export async function POST(req) {
       return NextResponse.json({ ok: false, error: "Invalid action" }, { status: 400 });
     }
 
-    // ---- optionele HMAC/nonce check (alleen actief als APP_SECRET is gezet) ----
+    // Optionele HMAC/nonce check (alleen als APP_SECRET is gezet)
     const secret = process.env.APP_SECRET || "";
     if (secret && csrf) {
       const [nonce, sig] = (csrf || "").split(".");
@@ -94,7 +94,7 @@ export async function POST(req) {
       }
     }
 
-    // ---- rate limits ----
+    // Rate limits
     const r1 = await rlIpMinute.limit(`dsar:ip:${ip}`);
     if (!r1.success) return rateLimitResponse({ scope: "ip_minute", reset: r1.reset });
 
@@ -104,7 +104,7 @@ export async function POST(req) {
     const r3 = await rlEmailDay.limit(`dsar:email:${norm(email)}`);
     if (!r3.success) return rateLimitResponse({ scope: "email_day", reset: r3.reset });
 
-    // user × company × action → cooldown 24 uur
+    // User × company × action: cooldown 24h
     const coKey = `dsar:${norm(email)}:${norm(company?.domain || company?.name)}:${action}`;
     const r4 = await rlUserCompanyDay.limit(coKey);
     if (!r4.success) {
@@ -114,7 +114,7 @@ export async function POST(req) {
       );
     }
 
-    // ---- compose mail + trunc op user input ----
+    // Compose + trunc
     const safeEmail = trunc(email, 120);
     const safeName  = trunc(name, 80);
     const { to, subject, body } = composeEmail({
@@ -124,59 +124,53 @@ export async function POST(req) {
       action,
     });
 
-    // ---- Supabase client ----
+    // Supabase client
     const SUPABASE_URL =
       process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-      return NextResponse.json(
-        { ok: false, error: "Supabase env missing" },
-        { status: 500 }
-      );
+      return NextResponse.json({ ok: false, error: "Supabase env missing" }, { status: 500 });
     }
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // ---- Supabase: DSAR opslaan (altijd eerst als 'previewed') ----
-const insertRow = {
-  email: safeEmail,
-  full_name: safeName || null,
-  company_domain: company?.domain || null,
-  company_name: company?.name || null,
-  action,                 // 'delete' | 'compensate'
-  to,                     // bv. 'privacy@youtube.com'
-  subject,                // onderwerp
-  body,                   // plain text
-  html: `<div style="font-family:system-ui,Segoe UI,Roboto,Arial">
-           ${body
-             .split("\n")
-             .map((line) => `<p>${line.replace(/</g, "&lt;")}</p>`)
-             .join("")}
-         </div>`,
-  status: "previewed",
+    // Insert (altijd eerst preview)
+    const insertRow = {
+      email: safeEmail,
+      full_name: safeName || null,
+      company_domain: company?.domain || null,
+      company_name: company?.name || null,
+      action,            // 'delete' | 'compensate'
+      to,                // <-- kolom heet 'to'
+      subject,
+      body,              // plain text
+      html: `<div style="font-family:system-ui,Segoe UI,Roboto,Arial">
+               ${body
+                 .split("\n")
+                 .map((line) => `<p>${line.replace(/</g, "&lt;")}</p>`)
+                 .join("")}
+             </div>`,
+      status: "previewed",
+      provider: "preview",           // <-- NOT NULL bij jou, dus zetten
+      provider_id: null,
+      sent_at: null,
+      last_error: null,
+      last_error_body: null,
+      ip,
+    };
 
-  // ✅ NIEUW: vul provider in bij preview
-  provider: "preview",          // <— belangrijk, kolom is NOT NULL bij jou
-  provider_id: null,
-  sent_at: null,
-  last_error: null,
-  last_error_body: null,
+    const { data: ins, error: insErr } = await supabase
+      .from("dsar_requests")
+      .insert(insertRow)
+      .select("id, created_at, status")
+      .single();
 
-  ip,
-};
+    if (insErr) {
+      console.error("insert dsar_requests error:", insErr);
+      throw insErr;
+    }
+    const dsarId = ins.id;
 
-const { data: ins, error: insErr } = await supabase
-  .from("dsar_requests")
-  .insert(insertRow)
-  .select("id, created_at, status")
-  .single();
-
-if (insErr) {
-  console.error("insert dsar_requests error:", insErr);
-  throw insErr;
-}
-const dsarId = ins.id;
-  
-    // ---- send/preview gate ----
+    // Send/preview gate
     let MODE = (process.env.DSAR_SEND_MODE || "preview").toLowerCase(); // "preview" | "live"
     const isProd = process.env.VERCEL_ENV === "production";
     const isOwn  = (process.env.NEXT_PUBLIC_BASE_URL || "").includes("discodruif.com");
@@ -196,8 +190,8 @@ const dsarId = ins.id;
           from: FROM,
           to: [to],
           subject,
-          text: body,            // text is prima voor DPO's
-          reply_to: safeEmail,   // bedrijf antwoordt direct naar de gebruiker
+          text: body,          // text is prima voor DPO's
+          reply_to: safeEmail, // bedrijf antwoordt direct naar de gebruiker
           bcc: BCC ? [BCC] : undefined,
           headers: {
             "X-DSAR-Company": company?.domain || company?.name || "unknown",
@@ -205,19 +199,25 @@ const dsarId = ins.id;
           },
         };
 
-        const r = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${RESEND_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payloadSend),
-        });
+        const sendViaResend = async (extraHeaders = {}) => {
+          const r = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${RESEND_API_KEY}`,
+              "Content-Type": "application/json",
+              ...extraHeaders,
+            },
+            body: JSON.stringify(payloadSend),
+          });
+          const txt = await r.text().catch(() => "");
+          return { ok: r.ok, status: r.status, txt };
+        };
 
-        const txt = await r.text().catch(() => "");
-        if (r.ok) {
-          const sent = JSON.parse(txt);
-          sentId = sent?.id ?? null;
+        const first = await sendViaResend();
+
+        if (first.ok) {
+          const parsed = JSON.parse(first.txt || "{}");
+          sentId = parsed?.id ?? null;
           finalStatus = "sent";
 
           await supabase
@@ -227,14 +227,32 @@ const dsarId = ins.id;
               provider: "resend",
               provider_id: sentId,
               sent_at: new Date().toISOString(),
+              last_error: null,
+              last_error_body: null,
             })
             .eq("id", dsarId);
-        } else {
+
+        } else if (first.status === 403) {
+          // Domein niet geverifieerd → preview houden en fout loggen
           await supabase
             .from("dsar_requests")
             .update({
-              last_error: `resend:${r.status}`,
-              last_error_body: txt?.slice(0, 4000) || null,
+              status: "previewed",
+              provider: "preview",
+              last_error: "resend:403-domain-not-verified",
+              last_error_body: first.txt?.slice(0, 4000) || null,
+            })
+            .eq("id", dsarId);
+
+        } else {
+          // Andere fout → preview houden en fout loggen
+          await supabase
+            .from("dsar_requests")
+            .update({
+              status: "previewed",
+              provider: "preview",
+              last_error: `resend:${first.status}`,
+              last_error_body: first.txt?.slice(0, 4000) || null,
             })
             .eq("id", dsarId);
         }
