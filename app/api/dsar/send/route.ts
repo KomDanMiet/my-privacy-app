@@ -15,10 +15,6 @@ function normDomain(input: string) {
   return d;
 }
 
-function min(n: number, a: number, b: number) {
-  return Math.max(a, Math.min(b, n));
-}
-
 function shouldEmail(contact: any) {
   if (!contact) return false;
   const MIN_CONF = Number(process.env.DSAR_MIN_CONF ?? 60);
@@ -38,11 +34,7 @@ async function getContact(domain: string, force = false) {
   }`;
   const r = await fetch(url, { cache: "no-store" });
   const j = await r.json().catch(() => ({}));
-  return j as {
-    ok: boolean;
-    error?: string;
-    contact?: any;
-  };
+  return j as { ok: boolean; error?: string; contact?: any };
 }
 /* ---------------------------- */
 
@@ -67,20 +59,19 @@ export async function POST(req: Request) {
 
     // 1) contact uit cache
     let { ok, contact, error } = await getContact(d, false);
-    if (!ok) return NextResponse.json({ ok: false, error: error || "Lookup failed" }, { status: 502 });
+    if (!ok) {
+      return NextResponse.json({ ok: false, error: error || "Lookup failed" }, { status: 502 });
+    }
 
     // 2) beslis: mailen of refresh/fallback
     const forceEmailTo = (toOverride as string) || undefined;
-    let decidedChannel: "email" | "form" | "none" = "none";
 
-    // Als we (nog) niet mogen mailen → force refresh
     if (!forceEmailTo && !shouldEmail(contact)) {
       const refreshed = await getContact(d, true);
       if (refreshed.ok) contact = refreshed.contact;
     }
 
     if (!forceEmailTo && contact?.contact_type === "form" && contact?.value) {
-      decidedChannel = "form";
       return NextResponse.json({
         ok: true,
         channel: "form",
@@ -107,52 +98,68 @@ export async function POST(req: Request) {
       );
     }
 
-    // privacy@ guard (alleen toestaan als die echt uit een high-confidence lookup komt)
+    // privacy@ guard: alleen toestaan als die uit een high-confidence lookup komt
     const isPrivacyGuess = to.toLowerCase().startsWith("privacy@");
     const fromLookupHighConf =
-      contact?.contact_type === "email" && (contact?.confidence ?? 0) >= Number(process.env.DSAR_MIN_CONF ?? 60);
+      contact?.contact_type === "email" &&
+      (contact?.confidence ?? 0) >= Number(process.env.DSAR_MIN_CONF ?? 60);
 
     if (!forceEmailTo && isPrivacyGuess && !fromLookupHighConf) {
       return NextResponse.json(
-        { ok: false, error: "Blocked unsafe fallback address (privacy@) without high-confidence lookup." },
+        {
+          ok: false,
+          error:
+            "Blocked unsafe fallback address (privacy@) without high-confidence lookup.",
+        },
         { status: 409 }
       );
     }
 
-    decidedChannel = forceEmailTo ? "email" : "email";
-
-    // 4) versturen met Resend
+    // 4) versturen met Resend (let op: geldig From-adres!)
     const FROM =
-      process.env.RESEND_FROM ||
-      "My Privacy App <dsar@example.com>"; // zorg dat dit geverifieerd is in Resend
-    const sendResp = await resend.emails.send({
+      process.env.RESEND_FROM || "My Privacy App <dsar@discodruif.com>";
+    // Zorg dat het domein (discodruif.com) is geverifieerd in Resend.
+
+    const { data, error: sendErr } = await resend.emails.send({
       from: FROM,
       to,
       subject,
       html: html ?? undefined,
       text: text ?? undefined,
-      replyTo: replyTo ?? undefined,
+      reply_to: replyTo ?? undefined,
       headers: { "X-App": "my-privacy-app", "X-DSAR-Domain": d },
     });
 
+    if (sendErr) {
+      console.error("Resend error:", sendErr);
+      return NextResponse.json(
+        { ok: false, error: sendErr.message || "Resend failed" },
+        { status: 502 }
+      );
+    }
+
+    const messageId = data?.id ?? null;
+
     console.log("[DSAR_SEND]", {
       domain: d,
-      decided: decidedChannel,
       to,
       confidence: contact?.confidence ?? null,
       last_bounce_at: contact?.last_bounce_at ?? null,
-      id: (sendResp as any)?.id ?? null,
+      id: messageId,
     });
 
     return NextResponse.json({
       ok: true,
       channel: "email",
-      id: (sendResp as any)?.id ?? null,
+      id: messageId,
       to,
       domain: d,
     });
   } catch (e: any) {
     console.error("DSAR send error:", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown" }, { status: 500 });
-    }
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? "Unknown" },
+      { status: 500 }
+    );
+  }
 }
