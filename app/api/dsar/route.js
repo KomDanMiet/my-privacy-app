@@ -16,13 +16,6 @@ import {
 if (!csrfOk(req)) {
   return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
 }
-// Optioneel: CSRF (standaard uit, aanzetten met ENABLE_CSRF=1)
-let csrfOk = () => true;
-try {
-  // alleen importeren als bestand bestaat
-  ({ csrfOk } = await import("@/lib/csrf"));
-} catch { /* noop */ }
-
 /* --------------------- helpers --------------------- */
 function getIp(req) {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
