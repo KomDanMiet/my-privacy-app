@@ -1,16 +1,24 @@
 // app/api/dsar/route.js
-import { csrfOk } from "@/lib/csrf";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
+
+// Rate limit utils (zorg dat deze in lib/ratelimit.js geëxporteerd zijn)
 import {
   rlIpMinute,
   rlIpDay,
   rlEmailDay,
-  rlUserCompanyDay,   // <- let op: met 'l'
+  rlUserCompanyDay,
   isBanned,
   rateLimitResponse,
 } from "@/lib/ratelimit.js";
-import crypto from "crypto";
+
+// Optioneel: CSRF (standaard uit, aanzetten met ENABLE_CSRF=1)
+let csrfOk = () => true;
+try {
+  // alleen importeren als bestand bestaat
+  ({ csrfOk } = await import("@/lib/csrf"));
+} catch { /* noop */ }
 
 /* --------------------- helpers --------------------- */
 function getIp(req) {
@@ -22,7 +30,7 @@ const trunc = (s, n) => (s || "").toString().slice(0, n);
 function buildToAddress(company) {
   const dom = norm(company?.domain);
   if (!dom) return null;
-  // later vervangen door vendors-lookup
+  // TODO: vervangen door vendors-lookup
   return `privacy@${dom}`;
 }
 
@@ -59,18 +67,18 @@ function composeEmail({ company, email, name, action }) {
  */
 export async function POST(req) {
   try {
-    // --- CSRF / Origin check ---
-    //if (!csrfOk(req)) {
-      //return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
-    //}
+    // --- CSRF / Origin check (alleen als ENABLE_CSRF=1) ---
+    if (process.env.ENABLE_CSRF === "1" && !csrfOk(req)) {
+      return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
+    }
 
     const ip = getIp(req);
-    const payload = await req.json();
+    const payload = await req.json().catch(() => ({}));
     const { email, name, company, action, honeypot, csrf } = payload || {};
 
     // honeypot + banlist
     if (honeypot) return rateLimitResponse({ reason: "honeypot" });
-    if (await isBanned(ip) || await isBanned(norm(email))) {
+    if (await isBanned(ip) || (email && await isBanned(norm(email)))) {
       return rateLimitResponse({ reason: "banned" });
     }
 
@@ -85,17 +93,19 @@ export async function POST(req) {
       return NextResponse.json({ ok: false, error: "Invalid action" }, { status: 400 });
     }
 
-    // optionele HMAC/CSRF token (als APP_SECRET is gezet)
+    // Optionele HMAC/CSRF token (alleen als APP_SECRET gezet is)
     const secret = process.env.APP_SECRET || "";
     if (secret) {
-      const [nonce, sig] = (csrf || "").split(".");
+      const [nonce, sig] = String(csrf || "").split(".");
       const ok =
         sig &&
         crypto.createHmac("sha256", secret).update(nonce).digest("base64url") === sig;
-      //if (!ok) return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
+      if (!ok) {
+        return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
+      }
     }
 
-    // rate limits
+    // Rate limits
     const r1 = await rlIpMinute.limit(`dsar:ip:${ip}`);
     if (!r1.success) return rateLimitResponse({ scope: "ip_minute", reset: r1.reset });
 
@@ -105,7 +115,7 @@ export async function POST(req) {
     const r3 = await rlEmailDay.limit(`dsar:email:${norm(email)}`);
     if (!r3.success) return rateLimitResponse({ scope: "email_day", reset: r3.reset });
 
-    // per user–company–action cooldown (24h)
+    // Per user–company–action cooldown (24h)
     const coKey = `dsar:${norm(email)}:${norm(company?.domain || company?.name)}:${action}`;
     const r4 = await rlUserCompanyDay.limit(coKey);
     if (!r4.success) {
@@ -115,7 +125,7 @@ export async function POST(req) {
       );
     }
 
-    // compose
+    // Compose (truncate user fields)
     const safeEmail = trunc(email, 120);
     const safeName  = trunc(name, 80);
     const { to, subject, body } = composeEmail({
@@ -125,7 +135,7 @@ export async function POST(req) {
       action,
     });
 
-    // supabase
+    // Supabase
     const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) {
@@ -133,7 +143,7 @@ export async function POST(req) {
     }
     const supabase = createClient(url, key);
 
-    // log request
+    // Log request (default: previewed)
     const { data: ins, error: insErr } = await supabase
       .from("dsar_requests")
       .insert({
@@ -154,7 +164,7 @@ export async function POST(req) {
     if (insErr) throw insErr;
     const dsarId = ins.id;
 
-    // send/preview gate
+    // Send/preview gate
     let MODE = (process.env.DSAR_SEND_MODE || "preview").toLowerCase();
     const isProd = process.env.VERCEL_ENV === "production";
     const isOwn  = (process.env.NEXT_PUBLIC_BASE_URL || "").includes("discodruif.com");
