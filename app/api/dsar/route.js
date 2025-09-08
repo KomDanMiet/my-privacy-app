@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
-
+import { csrfOk } from "@/lib/csrf";
 // Rate limit utils (zorg dat deze in lib/ratelimit.js geëxporteerd zijn)
 import {
   rlIpMinute,
@@ -13,6 +13,9 @@ import {
   rateLimitResponse,
 } from "@/lib/ratelimit.js";
 
+if (!csrfOk(req)) {
+  return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
+}
 // Optioneel: CSRF (standaard uit, aanzetten met ENABLE_CSRF=1)
 let csrfOk = () => true;
 try {
