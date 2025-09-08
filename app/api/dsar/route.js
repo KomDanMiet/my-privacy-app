@@ -1,9 +1,7 @@
 // app/api/dsar/route.js
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import crypto from "crypto";
 import { csrfOk } from "@/lib/csrf";
-// Rate limit utils (zorg dat deze in lib/ratelimit.js geëxporteerd zijn)
 import {
   rlIpMinute,
   rlIpDay,
@@ -12,10 +10,8 @@ import {
   isBanned,
   rateLimitResponse,
 } from "@/lib/ratelimit.js";
+import crypto from "crypto";
 
-if (!csrfOk(req)) {
-  return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
-}
 /* --------------------- helpers --------------------- */
 function getIp(req) {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
@@ -26,7 +22,7 @@ const trunc = (s, n) => (s || "").toString().slice(0, n);
 function buildToAddress(company) {
   const dom = norm(company?.domain);
   if (!dom) return null;
-  // TODO: vervangen door vendors-lookup
+  // TODO: vervangen door vendors-lookup (per leverancier juist adres)
   return `privacy@${dom}`;
 }
 
@@ -58,27 +54,24 @@ function composeEmail({ company, email, name, action }) {
 }
 /* --------------------------------------------------- */
 
-/**
- * DSAR endpoint
- */
 export async function POST(req) {
-  try {
-    // --- CSRF / Origin check (alleen als ENABLE_CSRF=1) ---
-    if (process.env.ENABLE_CSRF === "1" && !csrfOk(req)) {
-      return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
-    }
+  // ---- optionele CSRF/origin check (toggle met ENABLE_CSRF=1) ----
+  if (process.env.ENABLE_CSRF === "1" && !csrfOk(req)) {
+    return NextResponse.json({ ok: false, error: "CSRF failed" }, { status: 403 });
+  }
 
+  try {
     const ip = getIp(req);
     const payload = await req.json().catch(() => ({}));
     const { email, name, company, action, honeypot, csrf } = payload || {};
 
-    // honeypot + banlist
+    // ---- honeypot + banlist ----
     if (honeypot) return rateLimitResponse({ reason: "honeypot" });
-    if (await isBanned(ip) || (email && await isBanned(norm(email)))) {
+    if (await isBanned(ip) || (email && (await isBanned(norm(email))))) {
       return rateLimitResponse({ reason: "banned" });
     }
 
-    // validatie
+    // ---- basisvalidatie ----
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
       return NextResponse.json({ ok: false, error: "Invalid email" }, { status: 400 });
     }
@@ -89,10 +82,10 @@ export async function POST(req) {
       return NextResponse.json({ ok: false, error: "Invalid action" }, { status: 400 });
     }
 
-    // Optionele HMAC/CSRF token (alleen als APP_SECRET gezet is)
+    // ---- optionele HMAC/nonce check (alleen actief als APP_SECRET is gezet) ----
     const secret = process.env.APP_SECRET || "";
-    if (secret) {
-      const [nonce, sig] = String(csrf || "").split(".");
+    if (secret && csrf) {
+      const [nonce, sig] = (csrf || "").split(".");
       const ok =
         sig &&
         crypto.createHmac("sha256", secret).update(nonce).digest("base64url") === sig;
@@ -101,7 +94,7 @@ export async function POST(req) {
       }
     }
 
-    // Rate limits
+    // ---- rate limits ----
     const r1 = await rlIpMinute.limit(`dsar:ip:${ip}`);
     if (!r1.success) return rateLimitResponse({ scope: "ip_minute", reset: r1.reset });
 
@@ -111,7 +104,7 @@ export async function POST(req) {
     const r3 = await rlEmailDay.limit(`dsar:email:${norm(email)}`);
     if (!r3.success) return rateLimitResponse({ scope: "email_day", reset: r3.reset });
 
-    // Per user–company–action cooldown (24h)
+    // user × company × action → cooldown 24 uur
     const coKey = `dsar:${norm(email)}:${norm(company?.domain || company?.name)}:${action}`;
     const r4 = await rlUserCompanyDay.limit(coKey);
     if (!r4.success) {
@@ -121,7 +114,7 @@ export async function POST(req) {
       );
     }
 
-    // Compose (truncate user fields)
+    // ---- compose mail + trunc op user input ----
     const safeEmail = trunc(email, 120);
     const safeName  = trunc(name, 80);
     const { to, subject, body } = composeEmail({
@@ -131,15 +124,19 @@ export async function POST(req) {
       action,
     });
 
-    // Supabase
-    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) {
-      return NextResponse.json({ ok: false, error: "Supabase env missing" }, { status: 500 });
+    // ---- Supabase client ----
+    const SUPABASE_URL =
+      process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      return NextResponse.json(
+        { ok: false, error: "Supabase env missing" },
+        { status: 500 }
+      );
     }
-    const supabase = createClient(url, key);
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // Log request (default: previewed)
+    // ---- log request (altijd eerst previewed) ----
     const { data: ins, error: insErr } = await supabase
       .from("dsar_requests")
       .insert({
@@ -156,12 +153,12 @@ export async function POST(req) {
       })
       .select("id, created_at, status")
       .single();
-
     if (insErr) throw insErr;
+
     const dsarId = ins.id;
 
-    // Send/preview gate
-    let MODE = (process.env.DSAR_SEND_MODE || "preview").toLowerCase();
+    // ---- send/preview gate ----
+    let MODE = (process.env.DSAR_SEND_MODE || "preview").toLowerCase(); // "preview" | "live"
     const isProd = process.env.VERCEL_ENV === "production";
     const isOwn  = (process.env.NEXT_PUBLIC_BASE_URL || "").includes("discodruif.com");
     if (!(isProd && isOwn) && MODE === "live") MODE = "preview";
@@ -180,8 +177,8 @@ export async function POST(req) {
           from: FROM,
           to: [to],
           subject,
-          text: body,
-          reply_to: safeEmail,
+          text: body,            // text is prima voor DPO's
+          reply_to: safeEmail,   // bedrijf antwoordt direct naar de gebruiker
           bcc: BCC ? [BCC] : undefined,
           headers: {
             "X-DSAR-Company": company?.domain || company?.name || "unknown",
@@ -203,6 +200,7 @@ export async function POST(req) {
           const sent = JSON.parse(txt);
           sentId = sent?.id ?? null;
           finalStatus = "sent";
+
           await supabase
             .from("dsar_requests")
             .update({
@@ -227,7 +225,7 @@ export async function POST(req) {
     return NextResponse.json({
       ok: true,
       id: dsarId,
-      status: finalStatus,
+      status: finalStatus,  // "previewed" of "sent"
       to,
       subject,
       body,
