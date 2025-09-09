@@ -71,7 +71,7 @@ export default function Home() {
   async function checkVerified(showToast = true) {
     try {
       setChecking(true);
-      const url = `/api/is-verified?email=${encodeURIComponent(email)}`;
+      const url = `/api/verify/check?email=${encodeURIComponent(email)}`;
       const r = await fetch(url);
       const j = await r.json();
 
