@@ -10,17 +10,16 @@ import { createClient } from "@supabase/supabase-js";
 /** Map Resend event -> our status */
 function statusFromType(type?: string) {
   switch (type) {
-    case "email.sent":        return "sent";
-    case "email.delivered":   return "delivered";
-    case "email.bounced":     return "bounced";
-    case "email.complained":  return "complained";
-    case "email.opened":      return "opened";   // optional, for analytics
-    default:                  return "unknown";
+    case "email.sent":       return "sent";
+    case "email.delivered":  return "delivered";
+    case "email.bounced":    return "bounced";
+    case "email.complained": return "complained";
+    case "email.opened":     return "opened";   // optional analytics
+    default:                 return "unknown";
   }
 }
 
 export async function POST(req: Request) {
-  // 1) Verify Svix signature
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   if (!secret) {
     return NextResponse.json({ ok: false, error: "Missing RESEND_WEBHOOK_SECRET" }, { status: 500 });
@@ -36,6 +35,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Missing Svix headers" }, { status: 400 });
   }
 
+  // Verify signature
   let event: any;
   try {
     const wh = new Webhook(secret);
@@ -44,18 +44,32 @@ export async function POST(req: Request) {
       "svix-timestamp": svixTimestamp,
       "svix-signature": svixSignature,
     });
-  } catch (e: any) {
+  } catch {
     return NextResponse.json({ ok: false, error: "Invalid signature" }, { status: 400 });
   }
 
-  // Resend payload shape: { type, data: { id, to, subject, reason?, ... } }
   const type = event?.type as string | undefined;
   const data = event?.data ?? {};
-  const resendId: string | undefined = data.id;             // <-- use this to match dsar_messages.provider_id
-  const toEmail: string = (data.to || "").toLowerCase();
-  const toDomain = toEmail.includes("@") ? toEmail.split("@")[1] : null;
-  const reason: string | null = data.reason ?? null;
 
+  // IMPORTANT: Resend puts the message UUID here
+  const providerId: string | null = data.email_id ?? null;
+
+  // "to" can be string or string[]
+  let toEmail: string | null = null;
+  if (typeof data.to === "string") toEmail = data.to.toLowerCase();
+  else if (Array.isArray(data.to) && data.to.length > 0) toEmail = String(data.to[0]).toLowerCase();
+
+  // Try domain from header first (we added X-Dsar-Domain when sending)
+  const headerDomain =
+    Array.isArray(data.headers)
+      ? (data.headers.find((h: any) => (h?.name ?? "").toLowerCase() === "x-dsar-domain")?.value ?? null)
+      : null;
+
+  const toDomain =
+    headerDomain ??
+    (toEmail && toEmail.includes("@") ? toEmail.split("@")[1] : null);
+
+  const reason: string | null = data.reason ?? null;
   const status = statusFromType(type);
 
   const supa = createClient(
@@ -63,21 +77,19 @@ export async function POST(req: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // 2) Update dsar_messages by provider_id (idempotent)
-  if (resendId) {
-    // Upsert to be safe if the "sent" row wasn't inserted for some reason
+  // 1) Update dsar_messages by provider_id (idempotent)
+  if (providerId) {
     await supa
       .from("dsar_messages")
       .upsert(
-        { provider_id: resendId, status, payload: event },   // keep raw event for audit
+        { provider_id: providerId, status, payload: event },
         { onConflict: "provider_id" }
       );
   }
 
-  // 3) Optional: maintain vendors_contact confidence by recipient domain
+  // 2) Optional: tune vendors_contact confidence by domain
   if (toDomain) {
     if (type === "email.bounced") {
-      // lower confidence + note bounce
       await supa
         .from("vendors_contact")
         .update({
@@ -88,7 +100,6 @@ export async function POST(req: Request) {
         })
         .eq("domain", toDomain);
     } else if (type === "email.delivered") {
-      // raise confidence (cap at 80–90); try RPC first, fall back to update
       try {
         const { error } = await supa.rpc("set_confidence_max", { d: toDomain, c: 80 });
         if (error) throw error;
@@ -104,5 +115,11 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, status, id: resendId ?? null });
+  return NextResponse.json({ ok: true, status, id: providerId });
+}
+
+// (Optional) tiny GET for sanity checks in a browser;
+// safe to keep or remove.
+export async function GET() {
+  return NextResponse.json({ ok: true, path: "/api/resend/webhook" });
 }
