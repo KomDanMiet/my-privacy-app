@@ -1,66 +1,71 @@
 // app/api/discovery/gmail/callback/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { oauthClient, verifyState } from "@/lib/google";
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
-
-const SUPABASE_URL =
-  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-function sbAdmin() {
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-}
+import { oauthClient, verifyState, BASE_URL } from "@/lib/google";
 
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const code = url.searchParams.get("code") || "";
+    const code  = url.searchParams.get("code") || "";
     const state = url.searchParams.get("state") || "";
-    if (!code || !state) {
-      return NextResponse.json({ ok: false, error: "Missing code/state" }, { status: 400 });
-    }
 
-    const parsed = verifyState(state);
-    if (!parsed?.email) {
+    // 1) Verify signed state (HMAC) that we created in buildAuthUrl(email)
+    const st = verifyState(state); // => { email, ts } or null
+    if (!st) {
       return NextResponse.json({ ok: false, error: "Bad state" }, { status: 400 });
     }
-    const email = String(parsed.email).toLowerCase().trim();
 
     const client = oauthClient();
+
+    // 2) Exchange code for tokens
     const { tokens } = await client.getToken(code);
     if (!tokens || (!tokens.access_token && !tokens.refresh_token)) {
       return NextResponse.json({ ok: false, error: "No tokens from Google" }, { status: 502 });
     }
-
     client.setCredentials(tokens);
+
+    // 3) Determine the user’s email (prefer Google profile)
     const oauth2 = google.oauth2({ auth: client, version: "v2" });
-    await oauth2.userinfo.get().catch(() => null);
+    const me = await oauth2.userinfo.get().catch(() => null);
+    const email =
+      me?.data?.email ||
+      st.email || // fallback to email we embedded in state
+      "";
 
-    const sb = sbAdmin();
-    const { error: upErr } = await sb
-      .from("gmail_tokens")
-      .upsert({ email, token_json: tokens }, { onConflict: "email" });
-
-    if (upErr) {
-      console.error("gmail_tokens upsert error:", upErr);
-      return NextResponse.json(
-        { ok: false, error: `DB upsert failed: ${upErr.message}` },
-        { status: 500 }
-      );
+    if (!email) {
+      return NextResponse.json({ ok: false, error: "Could not determine email" }, { status: 400 });
     }
 
-    return NextResponse.json({
-      ok: true,
-      connected: true,
+    // 4) Persist tokens in Supabase
+    const sb = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    await sb
+  .from("gmail_tokens")
+  .upsert(
+    {
       email,
-      scope: tokens.scope || "https://www.googleapis.com/auth/gmail.readonly",
-      stored: true,
-    });
+      access_token: tokens.access_token ?? null,
+      refresh_token: tokens.refresh_token ?? null,
+      expires_at: tokens.expiry_date
+        ?? (typeof (tokens as any).expires_in === "number"
+              ? Date.now() + (tokens as any).expires_in * 1000
+              : null),
+      scope: tokens.scope ?? "https://www.googleapis.com/auth/gmail.readonly",
+    },
+    { onConflict: "email" }
+  );
+
+    // 5) Redirect to results
+    const target = `${BASE_URL}/results?email=${encodeURIComponent(email)}`;
+    return NextResponse.redirect(target, { status: 302 });
   } catch (e: any) {
     console.error("[gmail/callback] error:", e);
-    return NextResponse.json({ ok: false, error: e?.message || "Internal error" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: e?.message || "unknown" }, { status: 500 });
   }
 }
