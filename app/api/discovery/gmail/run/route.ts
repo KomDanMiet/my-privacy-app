@@ -1,127 +1,120 @@
-// app/api/discovery/gmail/run/route.ts
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { oauthClient } from "@/lib/google";
 import { google } from "googleapis";
-import { getDomain } from "tldts";
+import { createClient } from "@supabase/supabase-js";
+import { parse as tldParse } from "tldts";
 
-/* ---------------- helpers ---------------- */
+const SUPABASE_URL =
+  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-function toRegistrableDomain(input: string) {
-  try {
-    let s = (input || "").trim().toLowerCase();
+function extractEmail(text = "") {
+  // pakt user@host uit 'Name <user@host>'
+  const m = text.match(/[A-Z0-9._%+\-]+@([A-Z0-9.\-]+\.[A-Z]{2,})/i);
+  return m ? m[0] : null;
+}
 
-    // haal e-mailadres uit <...> of na @
-    const m = s.match(/<([^>]+)>/);
-    if (m) s = m[1];
-    const at = s.indexOf("@");
-    if (at > -1) s = s.slice(at + 1);
+function toRegistrableDomain(hostOrEmail = "") {
+  let host = hostOrEmail.trim().toLowerCase();
+  // als het een e-mailadres is → pak host
+  const emailMatch = host.match(/[A-Z0-9._%+\-]+@([A-Z0-9.\-]+\.[A-Z]{2,})/i);
+  if (emailMatch) host = emailMatch[1];
 
-    // url -> hostname
-    if (/^https?:\/\//.test(s)) s = new URL(s).hostname;
-
-    s = s.replace(/^www\./, "");
-
-    const d = getDomain(s); // tldts v7
-    return d || s;
-  } catch {
-    return (input || "").toLowerCase().replace(/^www\./, "");
+  host = host.replace(/^https?:\/\//, "").split("/")[0];
+  const parsed = tldParse(host);
+  if (parsed.domain) {
+    return parsed.publicSuffix ? `${parsed.domain}.${parsed.publicSuffix}` : parsed.domain;
   }
+  return host || null;
 }
 
-function extractDomainFromHeader(value = "") {
-  return toRegistrableDomain(value);
-}
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const email: string = body.email;
+  const days = Math.max(1, Math.min(365, Number(body.days ?? 90)));
+  const max = Math.max(10, Math.min(500, Number(body.limit ?? 200)));
 
-const IGNORE = new Set([
-  "gmail.com","googlemail.com","outlook.com","hotmail.com","live.com",
-  "icloud.com","me.com","yahoo.com","proton.me","protonmail.com","pm.me",
-  "ziggo.nl","kpnmail.nl","telenet.be",
-]);
-
-async function lookup(domain: string) {
-  const base = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-  const r = await fetch(
-    `${base}/api/contact/lookup?domain=${encodeURIComponent(domain)}&force=1`,
-    { cache: "no-store" }
-  );
-  return r.json().catch(() => ({}));
-}
-
-/* ---------------- route ---------------- */
-
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const userEmail = (searchParams.get("email") || "").toLowerCase().trim();
-  const days = Math.max(30, Number(searchParams.get("days") || 365)); // default 1 jaar
-  const maxMsgs = Math.max(20, Math.min(500, Number(searchParams.get("max") || 200)));
-
-  if (!userEmail || !/^\S+@\S+\.\S+$/.test(userEmail)) {
-    return NextResponse.json({ ok: false, error: "Missing/invalid email" }, { status: 400 });
+  if (!email) {
+    return NextResponse.json({ ok: false, error: "Missing email" }, { status: 400 });
   }
 
-  const sb = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-
-  const { data: tok } = await sb
+  const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const { data: row, error: tErr } = await sb
     .from("gmail_tokens")
-    .select("*")
-    .eq("user_email", userEmail)
+    .select("token_json")
+    .eq("email", email)
     .maybeSingle();
 
-  if (!tok?.access_token) {
-    return NextResponse.json(
-      { ok: false, error: "No Gmail token for this user. Connect first." },
-      { status: 401 }
-    );
+  if (!row?.token_json || tErr) {
+    return NextResponse.json({ ok: false, error: "No token found" }, { status: 404 });
   }
 
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({
-    access_token: tok.access_token,
-    refresh_token: tok.refresh_token || undefined,
-    expiry_date: tok.expiry_date || undefined,
-    scope: tok.scope || undefined,
-    token_type: tok.token_type || undefined,
+  const client = oauthClient();
+  client.setCredentials(row.token_json);
+
+  const gmail = google.gmail({ version: "v1", auth: client });
+
+  // recentste mails
+  const list = await gmail.users.messages.list({
+    userId: "me",
+    q: `newer_than:${days}d`,
+    maxResults: max,
   });
 
-  const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+  const ids = list.data.messages?.map(m => m.id!).filter(Boolean) ?? [];
+  let inserted = 0;
+  const domainsCount: Record<string, number> = {};
 
-  const q = `newer_than:${days}d -in:chats -in:drafts`;
-  const list = await gmail.users.messages.list({ userId: "me", q, maxResults: maxMsgs });
-  const ids = (list.data.messages || []).map((m) => m.id!).slice(0, maxMsgs);
-
-  const domains = new Set<string>();
   for (const id of ids) {
     const msg = await gmail.users.messages.get({
       userId: "me",
       id,
       format: "metadata",
-      metadataHeaders: ["From","Return-Path"],
+      metadataHeaders: ["From", "Return-Path", "Date", "Message-ID"],
     });
-    const headers = msg.data.payload?.headers || [];
-    const from = headers.find((h) => h.name?.toLowerCase() === "from")?.value || "";
-    const ret  = headers.find((h) => h.name?.toLowerCase() === "return-path")?.value || "";
-    const d1 = from ? extractDomainFromHeader(from) : "";
-    const d2 = ret  ? extractDomainFromHeader(ret)  : "";
-    [d1,d2].forEach((d) => { if (d && !IGNORE.has(d) && d.includes(".")) domains.add(d); });
-    if (domains.size > 300) break; // basic cap
-  }
 
-  const out: any[] = [];
-  for (const d of Array.from(domains).slice(0, 150)) {
-    try {
-      const lr = await lookup(d);
-      out.push({ domain: d, contact: lr?.contact || null, ok: !!lr?.ok });
-      await new Promise((res) => setTimeout(res, 150)); // throttle
-    } catch (e: any) {
-      out.push({ domain: d, error: e?.message || "lookup failed" });
+    const headers = msg.data.payload?.headers || [];
+    const from = headers.find(h => h.name?.toLowerCase() === "from")?.value || "";
+    const returnPath = headers.find(h => h.name?.toLowerCase() === "return-path")?.value || "";
+    const dateStr = headers.find(h => h.name?.toLowerCase() === "date")?.value || "";
+
+    const fromEmail = extractEmail(from) || extractEmail(returnPath) || "";
+    const domain = toRegistrableDomain(fromEmail || returnPath);
+
+    if (!domain) continue;
+
+    const msgDate = dateStr ? new Date(dateStr) : null;
+
+    const { error: insErr } = await sb.from("discovered_senders").upsert(
+      {
+        email,
+        msg_id: id,
+        header_from: from || null,
+        return_path: returnPath || null,
+        domain,
+        msg_date: msgDate ? msgDate.toISOString() : null,
+      },
+      { onConflict: "email,msg_id" }
+    );
+
+    if (!insErr) {
+      inserted++;
+      domainsCount[domain] = (domainsCount[domain] || 0) + 1;
     }
   }
 
-  return NextResponse.json({ ok: true, email: userEmail, found: out.length, results: out });
+  // top 20 domeinen
+  const top = Object.entries(domainsCount)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([domain, count]) => ({ domain, count }));
+
+  return NextResponse.json({
+    ok: true,
+    scanned: ids.length,
+    inserted,
+    top,
+  });
 }
