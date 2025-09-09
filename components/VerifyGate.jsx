@@ -1,48 +1,62 @@
+// components/VerifyGate.jsx
 "use client";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useCallback } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 export default function VerifyGate({ email, name }) {
   const [checking, setChecking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [msg, setMsg] = useState("");
   const router = useRouter();
+  const pathname = usePathname();
+  const search = useSearchParams();
+
+  const goResults = useCallback(() => {
+    const params = new URLSearchParams(search?.toString() || "");
+    params.set("email", email);
+    if (name) params.set("name", name);
+    const target = `/results?${params.toString()}`;
+
+    if (pathname?.startsWith("/results")) {
+      router.refresh();    // already on results: re-render
+    } else {
+      router.replace(target);
+    }
+  }, [email, name, pathname, router, search]);
 
   async function checkOnce() {
-    setChecking(true);
-    setError(null);
-    try {
-      const r = await fetch(`/api/verify/check?email=${encodeURIComponent(email)}`, { cache: "no-store" });
-      const j = await r.json();
-      if (j?.ok && j?.verified) {
-        router.refresh(); // je Results server component haalt dan opnieuw de DB
-        return true;
-      }
-    } catch (e) {
-      setError("Kon verificatie niet checken.");
-    } finally {
-      setChecking(false);
-    }
-    return false;
+    const r = await fetch(`/api/verify/check?email=${encodeURIComponent(email)}`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    return !!(j?.ok && j?.verified);
   }
 
-  async function poll() {
+  async function handleClick() {
+    setChecking(true);
+    setMsg("Controleren…");
     const start = Date.now();
     const TIMEOUT = 20_000;
+
     while (Date.now() - start < TIMEOUT) {
-      const ok = await checkOnce();
-      if (ok) return;
+      try {
+        if (await checkOnce()) {
+          setMsg("Geverifieerd! Even doorsturen…");
+          goResults();
+          return;
+        }
+      } catch {
+        // ignore, retry
+      }
       await new Promise(r => setTimeout(r, 2000));
     }
-    setError("Nog niet geverifieerd. Probeer 'Ik heb geverifieerd' opnieuw.");
+    setMsg("Nog niet geverifieerd. Klik opnieuw nadat je de e-mail hebt bevestigd.");
+    setChecking(false);
   }
 
   return (
-    <div>
-      {/* bestaande UI */}
-      <button onClick={poll} disabled={checking}>
-        {checking ? "Controleren..." : "Ik heb geverifieerd"}
+    <div style={{ marginTop: 12 }}>
+      <button onClick={handleClick} disabled={checking} style={{ padding: "8px 12px" }}>
+        {checking ? "Controleren…" : "Ik heb geverifieerd"}
       </button>
-      {error && <div style={{ color: "#f66" }}>{error}</div>}
+      {msg && <div style={{ marginTop: 8, opacity: 0.8 }}>{msg}</div>}
     </div>
   );
 }

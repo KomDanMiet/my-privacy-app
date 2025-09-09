@@ -35,8 +35,8 @@ async function topDomainsFor(email, take = 50) {
     .map(([domain]) => domain);
 }
 
-async function lookupContact(domain, force = false) {
-  const base = process.env.NEXT_PUBLIC_BASE_URL || "https://discodruif.com";
+async function lookupContact(domain, force = false, origin) {
+  const base = process.env.NEXT_PUBLIC_BASE_URL || origin;
   const url = `${base}/api/contact/lookup?domain=${encodeURIComponent(domain)}${
     force ? "&force=1" : ""
   }`;
@@ -105,7 +105,7 @@ export async function POST(req) {
       });
     }
 
-    // 1) echte domeinen uit je inbox-index
+    const origin = new URL(req.url).origin;
     const domains = await topDomainsFor(email, limit);
 
     // 2) contact lookup per domein
@@ -118,7 +118,7 @@ export async function POST(req) {
         while (i < domains.length) {
           const idx = i++;
           const d = domains[idx];
-          results[idx] = await lookupContact(d, force);
+          results[idx] = await lookupContact(d, force, origin);
         }
       })
     );
