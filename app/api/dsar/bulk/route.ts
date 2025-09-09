@@ -1,5 +1,6 @@
 // app/api/dsar/bulk/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -41,14 +42,13 @@ async function mapLimit<T, R>(
   return out;
 }
 
-async function topDomainsFor(email: string, take = 50) {
+async function topDomainsFor(email: string, take = 50): Promise<string[]> {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const { data, error } = await sb
     .from("discovered_senders")
     .select("domain")
     .eq("email", email)
     .limit(2000);
-
   if (error) throw error;
 
   const counts = new Map<string, number>();
@@ -79,7 +79,7 @@ async function lookupContacts(domains: string[], force = false): Promise<Enriche
         value: j?.contact?.value || null,
         confidence: j?.contact?.confidence ?? 0,
       };
-    } catch (e) {
+    } catch {
       return { domain, ok: false, contact_type: "none", value: null, confidence: 0 };
     }
   });
@@ -130,14 +130,14 @@ export async function POST(req: Request) {
       return { domain: c.domain, contact_confidence: c.confidence, resp };
     });
 
-    const okCount = results.filter((r) => r.resp?.body?.ok).length;
+    const sentOk = results.filter((r) => r.resp?.body?.ok).length;
 
     return NextResponse.json({
       ok: true,
       email,
       considered: domains.length,
       eligible: targets.length,
-      sent_ok: okCount,
+      sent_ok: sentOk,
       results,
       skipped: contacts
         .filter((c) => !(c.ok && c.contact_type === "email" && (c.confidence ?? 0) >= confMin))
@@ -145,6 +145,22 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.error("[dsar/bulk] error:", e);
+    return NextResponse.json({ ok: false, error: e?.message || "Internal error" }, { status: 500 });
+  }
+}
+
+/** Health/debug: GET met queryparams werkt ook. */
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const email = normEmail(url.searchParams.get("email") || "");
+    if (!email) return NextResponse.json({ ok: true, info: "bulk endpoint ready" });
+    const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? 10)));
+    const force = url.searchParams.get("force") === "1";
+    const domains = await topDomainsFor(email, limit);
+    const contacts = await lookupContacts(domains, force);
+    return NextResponse.json({ ok: true, sample: contacts });
+  } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "Internal error" }, { status: 500 });
   }
 }
