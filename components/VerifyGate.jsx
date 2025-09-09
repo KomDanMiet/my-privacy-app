@@ -1,6 +1,6 @@
 // components/VerifyGate.jsx
 "use client";
-import { useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 export default function VerifyGate({ email, name }) {
@@ -15,12 +15,8 @@ export default function VerifyGate({ email, name }) {
     params.set("email", email);
     if (name) params.set("name", name);
     const target = `/results?${params.toString()}`;
-
-    if (pathname?.startsWith("/results")) {
-      router.refresh();    // already on results: re-render
-    } else {
-      router.replace(target);
-    }
+    if (pathname?.startsWith("/results")) router.refresh();
+    else router.replace(target);
   }, [email, name, pathname, router, search]);
 
   async function checkOnce() {
@@ -29,12 +25,19 @@ export default function VerifyGate({ email, name }) {
     return !!(j?.ok && j?.verified);
   }
 
+  // ✅ auto-check on mount—if already verified, leave instantly
+  useEffect(() => {
+    (async () => {
+      try { if (await checkOnce()) goResults(); } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleClick() {
     setChecking(true);
     setMsg("Controleren…");
     const start = Date.now();
     const TIMEOUT = 20_000;
-
     while (Date.now() - start < TIMEOUT) {
       try {
         if (await checkOnce()) {
@@ -42,9 +45,7 @@ export default function VerifyGate({ email, name }) {
           goResults();
           return;
         }
-      } catch {
-        // ignore, retry
-      }
+      } catch {}
       await new Promise(r => setTimeout(r, 2000));
     }
     setMsg("Nog niet geverifieerd. Klik opnieuw nadat je de e-mail hebt bevestigd.");

@@ -1,4 +1,4 @@
-// app/components/DsarButton.jsx
+// components/DsarButton.jsx
 "use client";
 import { useState } from "react";
 
@@ -11,7 +11,19 @@ function toHost(v = "") {
   return d;
 }
 
-export default function DsarButton({ company, userEmail, userName, action = "delete" }) {
+export default function DsarButton(props) {
+  const {
+    company,
+    action = "delete",
+    // accept both prop names
+    userEmail,
+    userName,
+    email,
+    name,
+  } = props;
+
+  const resolvedEmail = userEmail ?? email ?? "";
+  const resolvedName  = userName  ?? name  ?? "";
   const [loading, setLoading] = useState(false);
 
   async function onClick() {
@@ -22,21 +34,21 @@ export default function DsarButton({ company, userEmail, userName, action = "del
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: userEmail,
-          name: userName,
-          company: { ...company, domain }, // normalized
+          email: resolvedEmail,
+          name: resolvedName,
+          company: { ...company, domain },
           action,
         }),
       });
-      const j = await r.json();
-      if (!r.ok || !j.ok) {
-        alert(j.error || "Kon verzoek niet versturen");
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        alert(j?.error || "Kon verzoek niet versturen");
         console.error(j);
         return;
       }
       if (j.channel === "form" && j.url) {
         window.open(j.url, "_blank", "noopener,noreferrer");
-      } else if (j.channel === "email") {
+      } else if (j.channel === "email" && j.to) {
         alert(`Verzonden naar ${j.to}`);
       }
     } finally {
@@ -47,7 +59,7 @@ export default function DsarButton({ company, userEmail, userName, action = "del
   return (
     <button className="px-3 py-2 rounded-md bg-black text-white disabled:opacity-50"
             onClick={onClick} disabled={loading}>
-      {loading ? "Bezig..." : "Verwijder mijn data"}
+      {loading ? "Bezig..." : "Verstuur DSAR"}
     </button>
   );
 }
