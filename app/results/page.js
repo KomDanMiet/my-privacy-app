@@ -97,11 +97,11 @@ export default async function Results({ searchParams }) {
   let considered = 0, eligible = [], needsForm = [], review = [], none = [], err = null;
   try {
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 12_000);
+    const t = setTimeout(() => controller.abort(), 30_000);
     const resp = await fetch(`${base}/api/discover`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, limit: 40, confidenceMin: 60 }),
+      body: JSON.stringify({ email, limit: 25, confidenceMin: 60 }),
       cache: "no-store",
       signal: controller.signal,
     });
