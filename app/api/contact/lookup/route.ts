@@ -1,4 +1,7 @@
+// app/api/contact/lookup/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { findPrivacyContact } from "../../../../lib/findPrivacyContact";
@@ -6,13 +9,9 @@ import { findPrivacyContact } from "../../../../lib/findPrivacyContact";
 function normDomain(d: string) {
   return (d || "").toLowerCase().replace(/^https?:\/\//, "").split("/")[0].trim();
 }
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
 
 const MIN_CONF = Number(process.env.DSAR_MIN_CONF ?? 60);
-const STALE_MS  = 30 * 24 * 60 * 60 * 1000;
+const STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function isStale(row: any) {
   if (!row?.checked_at) return true;
@@ -27,21 +26,30 @@ export async function GET(req: Request) {
   const allowDowngrade = searchParams.get("downgrade") === "1";
   if (!d) return NextResponse.json({ ok: false, error: "No domain" }, { status: 400 });
 
-  const { data: existing, error: e1 } = await supabase
-    .from("vendors_contact")
-    .select("*").eq("domain", d).maybeSingle();
-  if (e1) return NextResponse.json({ ok: false, error: e1.message }, { status: 500 });
+  const sb = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
 
-  // geen refresh nodig
+  const { data: existing } = await sb
+    .from("vendors_contact")
+    .select("*")
+    .eq("domain", d)
+    .maybeSingle();
+
   if (!force && existing && !isStale(existing)) {
     return NextResponse.json({ ok: true, domain: d, contact: existing });
   }
 
-  // crawl
   const probed = await findPrivacyContact(d);
 
-  // --- sticky merge logic ---
-  let next = {
+  // sticky merge
+  const hadGoodEmail =
+    existing?.contact_type === "email" && (existing?.confidence ?? 0) >= MIN_CONF;
+  const probedIsGoodEmail =
+    probed.contact_type === "email" && (probed.confidence ?? 0) >= MIN_CONF;
+
+  const next = {
     domain: d,
     contact_type: probed.contact_type,
     value: probed.value,
@@ -53,19 +61,13 @@ export async function GET(req: Request) {
     meta: probed.meta,
   } as any;
 
-  // Als we al een goede e-mail hadden, NIET downgraden naar none/form/low
-  const hadGoodEmail = existing?.contact_type === "email" && (existing?.confidence ?? 0) >= MIN_CONF;
-
-  const probedIsGoodEmail = probed.contact_type === "email" && (probed.confidence ?? 0) >= MIN_CONF;
-
   if (!allowDowngrade && hadGoodEmail && !probedIsGoodEmail) {
-    // bewaar bestaande goede waarde; alleen checked_at/meta bijwerken
     next.contact_type = existing.contact_type;
-    next.value        = existing.value;
-    next.confidence   = existing.confidence;
+    next.value = existing.value;
+    next.confidence = existing.confidence;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from("vendors_contact")
     .upsert(next, { onConflict: "domain" })
     .select()

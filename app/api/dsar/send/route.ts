@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import { createClient } from "@supabase/supabase-js";
 
 /* ---------- helpers ---------- */
 function normDomain(input: string) {
@@ -63,7 +64,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: error || "Lookup failed" }, { status: 502 });
     }
 
-    // 2) beslis: mailen of refresh/fallback
+    // 2) beslissen: mailen of refresh/fallback
     const forceEmailTo = (toOverride as string) || undefined;
 
     if (!forceEmailTo && !shouldEmail(contact)) {
@@ -71,6 +72,7 @@ export async function POST(req: Request) {
       if (refreshed.ok) contact = refreshed.contact;
     }
 
+    // Fallback: formulier
     if (!forceEmailTo && contact?.contact_type === "form" && contact?.value) {
       return NextResponse.json({
         ok: true,
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // privacy@ guard: alleen toestaan als die uit een high-confidence lookup komt
+    // privacy@ guard: alleen toestaan als ‘ie echt uit een high-confidence lookup komt
     const isPrivacyGuess = to.toLowerCase().startsWith("privacy@");
     const fromLookupHighConf =
       contact?.contact_type === "email" &&
@@ -115,18 +117,16 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4) versturen met Resend (camelCase replyTo!)
+    // 4) versturen met Resend
     const FROM =
       process.env.RESEND_FROM || "My Privacy App <dsar@discodruif.com>";
-    // Verifieer dit domein in Resend (SPF/DKIM/DMARC).
-
     const { data, error: sendErr } = await resend.emails.send({
       from: FROM,
       to,
       subject,
       html: html ?? undefined,
       text: text ?? undefined,
-      replyTo: replyTo ?? undefined, // <-- fix hier
+      replyTo: replyTo ?? undefined, // camelCase in Resend v6
       headers: { "X-App": "my-privacy-app", "X-DSAR-Domain": d },
     });
 
@@ -139,6 +139,27 @@ export async function POST(req: Request) {
     }
 
     const messageId = data?.id ?? null;
+
+    // 5) (optioneel) audit-log in Supabase
+    try {
+      const sb = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+      await sb.from("dsar_requests").insert({
+        company_domain: d,
+        to,
+        subject,
+        body: text ?? null,
+        html: html ?? null,
+        status: "sent",
+        provider: "resend",
+        provider_id: messageId,
+        sent_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn("dsar_requests insert warning:", (e as any)?.message || e);
+    }
 
     console.log("[DSAR_SEND]", {
       domain: d,

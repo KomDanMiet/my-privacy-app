@@ -30,7 +30,8 @@ export default function DsarButton({ company, userEmail, userName, action = "del
       });
       const j = await r.json();
       if (!r.ok || !j.ok) {
-        alert(j.error || "Kon verzoek niet opslaan");
+        alert(j.error || "Kon verzoek niet versturen");
+        console.error(j);
         return;
       }
       if (j.channel === "form" && j.url) {

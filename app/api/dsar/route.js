@@ -25,7 +25,6 @@ export async function POST(req) {
     return NextResponse.json({ ok:false, error:"Invalid company domain" }, { status:400 });
   }
 
-  // subject/body op basis van action
   const subject =
     action === "delete"
       ? "Data deletion request under GDPR (Art. 17)"
@@ -64,7 +63,7 @@ export async function POST(req) {
       text,
       html,
       replyTo: email,
-      toOverride, // alleen voor tests; in UI normaal weglaten
+      toOverride, // alleen voor test
     }),
   });
 
