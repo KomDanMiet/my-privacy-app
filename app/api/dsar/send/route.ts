@@ -139,6 +139,32 @@ export async function POST(req: Request) {
     }
 
     const messageId = data?.id ?? null;
+// right after: const messageId = data?.id ?? null;
+
+// derive who is making the DSAR (bulk passes replyTo = user email)
+const requestEmail =
+  (typeof (replyTo ?? "") === "string" ? String(replyTo) : null) ?? null;
+
+try {
+  const sb = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
+  await sb
+    .from("dsar_messages")
+    .insert({
+      request_email: requestEmail, // e.g., "maurits.vaneck01@gmail.com"
+      target_domain: d,            // vendor domain
+      channel: "email",
+      status: "sent",
+      provider_id: messageId,      // <-- matches Resend event.data.id
+      to_address: to,
+      payload: { subject, text: text ?? null, html: html ?? null },
+    });
+} catch (e) {
+  console.warn("dsar_messages insert warning:", (e as any)?.message || e);
+}
 
     // 5) (optioneel) audit-log in Supabase
     try {
