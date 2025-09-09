@@ -44,21 +44,21 @@ function Section({ title, hint, items = [], badge }) {
 
               {/* Acties – we geven een 'company' achtig object door voor bestaande DsarButton */}
               <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                <DsarButton
-                  email={Section.email}
-                  name={Section.name}
-                  company={{
-                    name: c.domain,
-                    domain: c.domain,
-                    privacyUrl: c.contact_type === "form" ? c.value : undefined,
-                    contactEmail: c.contact_type === "email" ? c.value : undefined,
-                    contact_type: c.contact_type,
-                    confidence: c.confidence,
-                  }}
-                  action="delete"
-                >
-                  DSAR versturen
-                </DsarButton>
+              <DsarButton
+  email={email}            // pass directly
+  name={name}              // pass directly
+  company={{
+    name: c.domain,
+    domain: c.domain,
+    privacyUrl: c.contact_type === "form" ? c.value : undefined,
+    contactEmail: c.contact_type === "email" ? c.value : undefined,
+    contact_type: c.contact_type,
+    confidence: c.confidence,
+  }}
+  action="delete"
+>
+  DSAR versturen
+</DsarButton>
               </div>
             </li>
           ))}
