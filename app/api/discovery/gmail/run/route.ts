@@ -24,7 +24,7 @@ function toRegistrableDomain(input: string) {
 
     s = s.replace(/^www\./, "");
 
-    const d = getDomain(s); // werkt in v7
+    const d = getDomain(s); // tldts v7
     return d || s;
   } catch {
     return (input || "").toLowerCase().replace(/^www\./, "");
