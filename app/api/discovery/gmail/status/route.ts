@@ -1,3 +1,4 @@
+// app/api/discovery/gmail/status/route.ts
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -11,7 +12,9 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const email = (url.searchParams.get("email") || "").toLowerCase().trim();
-    if (!email) return NextResponse.json({ ok: false, error: "Missing email" }, { status: 400 });
+    if (!email) {
+      return NextResponse.json({ ok: false, error: "Missing email" }, { status: 400 });
+    }
 
     const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const { data, error } = await sb
@@ -21,7 +24,12 @@ export async function GET(req: Request) {
       .maybeSingle();
 
     if (error) throw error;
-    return NextResponse.json({ ok: true, connected: !!data, data });
+
+    return NextResponse.json({
+      ok: true,
+      connected: !!data,
+      data,
+    });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "Internal error" }, { status: 500 });
   }
