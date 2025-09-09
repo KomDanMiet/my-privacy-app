@@ -13,8 +13,8 @@ export async function GET(req: Request) {
     const code  = url.searchParams.get("code") || "";
     const state = url.searchParams.get("state") || "";
 
-    // 1) Verify signed state (HMAC) that we created in buildAuthUrl(email)
-    const st = verifyState(state); // => { email, ts } or null
+    // 1) Verify signed state (HMAC)
+    const st = verifyState(state); // -> { email, ts } | null
     if (!st) {
       return NextResponse.json({ ok: false, error: "Bad state" }, { status: 400 });
     }
@@ -28,13 +28,22 @@ export async function GET(req: Request) {
     }
     client.setCredentials(tokens);
 
-    // 3) Determine the user’s email (prefer Google profile)
-    const oauth2 = google.oauth2({ auth: client, version: "v2" });
-    const me = await oauth2.userinfo.get().catch(() => null);
-    const email =
-      me?.data?.email ||
-      st.email || // fallback to email we embedded in state
-      "";
+    // 3) Determine the user's email (use Gmail profile; fall back to state or userinfo)
+    const gmail = google.gmail({ version: "v1", auth: client });
+
+    let email: string = st.email || "";
+    try {
+      const prof = await gmail.users.getProfile({ userId: "me" });
+      if (prof?.data?.emailAddress) email = prof.data.emailAddress;
+    } catch { /* ignore */ }
+
+    if (!email) {
+      try {
+        const oauth2 = google.oauth2({ auth: client, version: "v2" });
+        const me = await oauth2.userinfo.get();
+        email = me?.data?.email || email;
+      } catch { /* ignore */ }
+    }
 
     if (!email) {
       return NextResponse.json({ ok: false, error: "Could not determine email" }, { status: 400 });
@@ -45,21 +54,23 @@ export async function GET(req: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
+
     await sb
-  .from("gmail_tokens")
-  .upsert(
-    {
-      email,
-      access_token: tokens.access_token ?? null,
-      refresh_token: tokens.refresh_token ?? null,
-      expires_at: tokens.expiry_date
-        ?? (typeof (tokens as any).expires_in === "number"
+      .from("gmail_tokens")
+      .upsert(
+        {
+          email,
+          access_token: tokens.access_token ?? null,
+          refresh_token: tokens.refresh_token ?? null,
+          expires_at:
+            tokens.expiry_date ??
+            (typeof (tokens as any).expires_in === "number"
               ? Date.now() + (tokens as any).expires_in * 1000
               : null),
-      scope: tokens.scope ?? "https://www.googleapis.com/auth/gmail.readonly",
-    },
-    { onConflict: "email" }
-  );
+          scope: tokens.scope ?? "https://www.googleapis.com/auth/gmail.readonly",
+        },
+        { onConflict: "email" }
+      );
 
     // 5) Redirect to results
     const target = `${BASE_URL}/results?email=${encodeURIComponent(email)}`;
