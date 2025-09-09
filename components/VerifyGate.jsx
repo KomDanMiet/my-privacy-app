@@ -1,46 +1,48 @@
-// app/components/VerifyGate.jsx
 "use client";
-
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function VerifyGate({ email, name }) {
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
-  async function checkAgain() {
-    setLoading(true);
-    setMsg("");
+  async function checkOnce() {
+    setChecking(true);
+    setError(null);
     try {
-      const r = await fetch(`/api/is-verified?email=${encodeURIComponent(email)}`, {
-        cache: "no-store",
-      });
-      const j = await r.json().catch(() => ({}));
-      if (j?.ok && j.verified) {
-        // direct naar resultaten, naam meegooien
-        const q = new URLSearchParams({ email, ...(name ? { name } : {}) }).toString();
-        router.replace(`/results?${q}`);
-      } else {
-        setMsg("Nog niet geverifieerd. Check je mailbox en klik op de verificatielink.");
+      const r = await fetch(`/api/verify/check?email=${encodeURIComponent(email)}`, { cache: "no-store" });
+      const j = await r.json();
+      if (j?.ok && j?.verified) {
+        router.refresh(); // je Results server component haalt dan opnieuw de DB
+        return true;
       }
     } catch (e) {
-      setMsg("Kon verificatiestatus niet ophalen.");
+      setError("Kon verificatie niet checken.");
     } finally {
-      setLoading(false);
+      setChecking(false);
     }
+    return false;
+  }
+
+  async function poll() {
+    const start = Date.now();
+    const TIMEOUT = 20_000;
+    while (Date.now() - start < TIMEOUT) {
+      const ok = await checkOnce();
+      if (ok) return;
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    setError("Nog niet geverifieerd. Probeer 'Ik heb geverifieerd' opnieuw.");
   }
 
   return (
-    <div style={{ marginTop: 12 }}>
-      <button
-        onClick={checkAgain}
-        disabled={loading}
-        style={{ padding: "8px 12px", borderRadius: 6, background: "#0ea5e9", color: "#fff", border: "none" }}
-      >
-        {loading ? "Bezig..." : "Ik heb geverifieerd – check opnieuw"}
+    <div>
+      {/* bestaande UI */}
+      <button onClick={poll} disabled={checking}>
+        {checking ? "Controleren..." : "Ik heb geverifieerd"}
       </button>
-      {msg && <div style={{ marginTop: 8, color: "#f87171" }}>{msg}</div>}
+      {error && <div style={{ color: "#f66" }}>{error}</div>}
     </div>
   );
 }
