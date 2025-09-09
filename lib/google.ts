@@ -2,19 +2,29 @@
 import { google } from "googleapis";
 import crypto from "crypto";
 
-export function baseUrl() {
-  return process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-}
+/** Lees BASE_URL uit env en maak 'm veilig (trim + geen trailing slash). */
+const RAW_BASE_URL =
+  process.env.NEXT_PUBLIC_BASE_URL ||
+  process.env.BASE_URL ||
+  "http://localhost:3000";
 
+export const BASE_URL = RAW_BASE_URL.trim().replace(/\/+$/, "");
+
+/** OAuth client met correcte redirect URI. */
 export function oauthClient() {
-  return new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID!,
-    process.env.GOOGLE_CLIENT_SECRET!,
-    `${baseUrl()}/api/discovery/gmail/callback`
-  );
+  const clientId = process.env.GOOGLE_CLIENT_ID!;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET!;
+  const redirectUri = `${BASE_URL}/api/discovery/gmail/callback`;
+
+  const client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+
+  // Handige debuglog; mag je weghalen
+  console.log("[oauth] redirectUri =", redirectUri);
+
+  return client;
 }
 
-// Sign/verify state zodat niemand kan rommelen met de e-mail
+/** Sign/verify van state zodat er niet met ?state gerommeld kan worden. */
 export function signState(obj: any) {
   const secret = process.env.APP_SECRET || "dev-secret";
   const json = JSON.stringify(obj);
@@ -33,4 +43,17 @@ export function verifyState(stateB64: string) {
   } catch {
     return null;
   }
+}
+
+/** Optioneel: helper om de auth-URL te bouwen. */
+export function buildAuthUrl(email: string) {
+  const client = oauthClient();
+  const state = signState({ email, ts: Date.now() });
+  return client.generateAuthUrl({
+    access_type: "offline",
+    scope: ["https://www.googleapis.com/auth/gmail.readonly"],
+    include_granted_scopes: true,
+    prompt: "consent",
+    state,
+  });
 }

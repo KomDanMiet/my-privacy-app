@@ -42,6 +42,6 @@ export async function GET(req: Request) {
   }, { onConflict: "user_email" });
 
   // terug naar results (of jouw gewenste pagina)
-  const redirect = `${baseUrl()}/results?email=${encodeURIComponent(userEmail)}&connected=gmail`;
+  const redirect = `${BASE_URL}/results?email=${encodeURIComponent(userEmail)}&connected=gmail`;
   return NextResponse.redirect(redirect);
 }
