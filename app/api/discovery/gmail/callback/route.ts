@@ -35,16 +35,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "No tokens from Google" }, { status: 502 });
     }
 
-    // vraag nog even de eigen e-mail op via Google (ter validatie)
     client.setCredentials(tokens);
     const oauth2 = google.oauth2({ auth: client, version: "v2" });
-    const me = await oauth2.userinfo.get().catch(() => null);
-    const googleEmail = (me?.data?.email || "").toLowerCase();
-
-    if (googleEmail && googleEmail !== email) {
-      // we slaan alsnog onder de “state”-email op (jij bepaalt de key);
-      // je kunt hier ook switchen naar googleEmail als je wilt
-    }
+    await oauth2.userinfo.get().catch(() => null);
 
     const sb = sbAdmin();
     const { error: upErr } = await sb
@@ -52,7 +45,6 @@ export async function GET(req: Request) {
       .upsert({ email, token_json: tokens }, { onConflict: "email" });
 
     if (upErr) {
-      // laat de fout zien zodat je hem in Vercel Logs terugziet
       console.error("gmail_tokens upsert error:", upErr);
       return NextResponse.json(
         { ok: false, error: `DB upsert failed: ${upErr.message}` },
