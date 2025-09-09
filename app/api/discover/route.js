@@ -37,18 +37,25 @@ async function topDomainsFor(email, take = 50) {
 
 async function lookupContact(domain, force = false, origin) {
   const base = process.env.NEXT_PUBLIC_BASE_URL || origin;
-  const url = `${base}/api/contact/lookup?domain=${encodeURIComponent(domain)}${
-    force ? "&force=1" : ""
-  }`;
-  const res = await fetch(url, { cache: "no-store" });
-  const j = await res.json().catch(() => ({}));
-  return {
-    domain,
-    ok: !!j?.ok,
-    contact_type: j?.contact?.contact_type || "none",
-    value: j?.contact?.value || null,
-    confidence: j?.contact?.confidence ?? 0,
-  };
+  const url = `${base}/api/contact/lookup?domain=${encodeURIComponent(domain)}${force ? "&force=1" : ""}`;
+
+  const controller = new AbortController();
+  const to = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch(url, { cache: "no-store", signal: controller.signal });
+    const j = await res.json().catch(() => ({}));
+    return {
+      domain,
+      ok: !!j?.ok,
+      contact_type: j?.contact?.contact_type || "none",
+      value: j?.contact?.value || null,
+      confidence: j?.contact?.confidence ?? 0,
+    };
+  } catch {
+    return { domain, ok: false, contact_type: "none", value: null, confidence: 0 };
+  } finally {
+    clearTimeout(to);
+  }
 }
 
 async function hibpLookup(email) {
