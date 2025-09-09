@@ -18,12 +18,8 @@ type Enriched = {
   confidence: number;
 };
 
-function norm(s: string) {
-  return (s || "").trim();
-}
-function normEmail(s: string) {
-  return (s || "").toLowerCase().trim();
-}
+const norm = (s: string) => (s || "").trim();
+const normEmail = (s: string) => (s || "").toLowerCase().trim();
 
 async function mapLimit<T, R>(
   items: T[],
@@ -113,18 +109,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Missing html or text body" }, { status: 400 });
     }
 
-    // 1) Kies top N domeinen
     const domains = await topDomainsFor(email, limit);
-
-    // 2) Lookup contact per domein
     const contacts = await lookupContacts(domains, force);
 
-    // 3) Filter op e-mailkanaal met voldoende confidence
     const targets = contacts.filter(
       (c) => c.ok && c.contact_type === "email" && (c.confidence ?? 0) >= confMin
     );
 
-    // 4) Sturen (concurrency limiter)
     const results = await mapLimit(targets, 3, async (c) => {
       const resp = await sendOne(c.domain, subject, html, text, email);
       return { domain: c.domain, contact_confidence: c.confidence, resp };
@@ -149,12 +140,14 @@ export async function POST(req: Request) {
   }
 }
 
-/** Health/debug: GET met queryparams werkt ook. */
 export async function GET(req: Request) {
+  // Health/debug: zonder ?email=... een korte bevestiging
   try {
     const url = new URL(req.url);
     const email = normEmail(url.searchParams.get("email") || "");
-    if (!email) return NextResponse.json({ ok: true, info: "bulk endpoint ready" });
+    if (!email) {
+      return NextResponse.json({ ok: true, info: "dsar/bulk ready (POST to use)" });
+    }
     const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? 10)));
     const force = url.searchParams.get("force") === "1";
     const domains = await topDomainsFor(email, limit);
