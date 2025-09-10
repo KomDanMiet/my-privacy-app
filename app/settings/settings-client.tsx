@@ -2,9 +2,7 @@
 
 import { useState } from "react";
 
-const GOOGLE_PERMS_URL =
-  "https://myaccount.google.com/permissions"; // Third-party access
-// Alternative direct: https://myaccount.google.com/connections
+const GOOGLE_PERMS_URL = "https://myaccount.google.com/permissions";
 
 export default function SettingsClient() {
   const [email, setEmail] = useState("");
@@ -25,9 +23,7 @@ export default function SettingsClient() {
         body: JSON.stringify({ email }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Could not disconnect Gmail.");
-      }
+      if (!r.ok || !j?.ok) throw new Error(j?.error || "Could not disconnect Gmail.");
       setStatus({ kind: "ok", msg: "Gmail disconnected. (Local tokens cleared.)" });
     } catch (e: any) {
       setStatus({ kind: "err", msg: e?.message || "Failed to disconnect." });
@@ -71,7 +67,6 @@ export default function SettingsClient() {
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-md border border-zinc-700 px-4 py-2"
-            title="Open Google account permissions in a new tab"
           >
             Open Google permissions
           </a>
@@ -87,20 +82,6 @@ export default function SettingsClient() {
           </div>
         )}
       </div>
-
-      {/* Optional: full account deletion */}
-      {/* 
-      <div className="rounded-xl border border-zinc-800 p-5">
-        <h2 className="text-xl font-semibold mb-2">Delete my Disco Druif data</h2>
-        <p className="text-sm opacity-80 mb-3">
-          Delete your DSAR logs and associated discovery info from our systems.
-          This does not affect your Google account; revoke access above.
-        </p>
-        <button className="rounded-md border border-rose-500 text-rose-300 px-4 py-2">
-          Request deletion
-        </button>
-      </div>
-      */}
     </section>
   );
 }

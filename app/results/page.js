@@ -14,9 +14,8 @@ function Section({ title, hint, items = [], email, name }) {
         {title}{" "}
         <span style={{ opacity: 0.6, fontSize: 14 }}>({items.length})</span>
       </h3>
-      {hint && (
-        <p style={{ opacity: 0.8, marginTop: 0, marginBottom: 10 }}>{hint}</p>
-      )}
+      {hint && <p style={{ opacity: 0.8, margin: "0 0 10px" }}>{hint}</p>}
+
       {items.length === 0 ? (
         <div style={{ opacity: 0.7 }}>—</div>
       ) : (
@@ -51,8 +50,7 @@ function Section({ title, hint, items = [], email, name }) {
                   company={{
                     name: c.domain,
                     domain: c.domain,
-                    privacyUrl:
-                      c.contact_type === "form" ? c.value : undefined,
+                    privacyUrl: c.contact_type === "form" ? c.value : undefined,
                     contactEmail:
                       c.contact_type === "email" ? c.value : undefined,
                     contact_type: c.contact_type,
@@ -76,26 +74,20 @@ function isGmail(addr = "") {
 }
 
 export default async function Results({ searchParams }) {
-  const email =
-    typeof searchParams?.email === "string" ? searchParams.email : "";
-  const name =
-    typeof searchParams?.name === "string" ? searchParams.name : "";
+  const email = typeof searchParams?.email === "string" ? searchParams.email : "";
+  const name = typeof searchParams?.name === "string" ? searchParams.name : "";
   if (!email) redirect("/");
 
-  // 1) envs
+  // --- envs ---
   const SUPABASE_URL =
     process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!SUPABASE_URL || !SERVICE_KEY) {
     console.error("[results] missing Supabase envs");
-    return (
-      <main style={{ padding: 16 }}>
-        ❌ Server misconfiguratie (Supabase envs ontbreken).
-      </main>
-    );
+    return <main style={{ padding: 16 }}>❌ Server misconfiguratie.</main>;
   }
 
-  // 2) verified?
+  // --- verified? ---
   let verified = false;
   try {
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -127,19 +119,17 @@ export default async function Results({ searchParams }) {
 
   const base = process.env.NEXT_PUBLIC_BASE_URL || "";
 
-  // 3) check gmail token status (only for gmail addresses)
+  // --- Gmail token status ---
   let gmailStatus = { hasToken: false, isFresh: false };
   if (isGmail(email)) {
     try {
       const s = await fetch(
-        `${base}/api/discovery/gmail/status?email=${encodeURIComponent(
-          email
-        )}`,
+        `${base}/api/gmail/status?email=${encodeURIComponent(email)}`,
         { cache: "no-store" }
       );
       const sj = await s.json().catch(() => ({}));
       gmailStatus = {
-        hasToken: !!sj?.hasToken ?? !!sj?.connected, // backward compat
+        hasToken: (sj?.hasToken ?? sj?.connected) ? true : false,
         isFresh: !!sj?.isFresh,
       };
     } catch {
@@ -147,7 +137,7 @@ export default async function Results({ searchParams }) {
     }
   }
 
-  // 4) fetch discover buckets (with generous timeout)
+  // --- discover buckets ---
   let considered = 0,
     eligible = [],
     needsForm = [],
@@ -208,9 +198,7 @@ export default async function Results({ searchParams }) {
             inhoud).
           </div>
           <a
-            href={`/api/discovery/gmail/redirect?email=${encodeURIComponent(
-              email
-            )}`}
+            href={`/api/gmail/start?email=${encodeURIComponent(email)}`}
             style={{
               padding: "8px 12px",
               borderRadius: 6,
