@@ -6,7 +6,7 @@ import DsarButton from "@/components/DsarButton";
 import DsarList from "@/components/DsarList";
 import VerifyGate from "@/components/VerifyGate";
 import AutoScanAndReload from "@/components/AutoScanAndReload";
-
+import ManualScanButton from "@/components/ManualScanButton";
 function Section({ title, hint, items = [], email, name }) {
   return (
     <section style={{ marginBottom: 28 }}>
@@ -176,11 +176,22 @@ export default async function Results({ searchParams }) {
 
   return (
     <main style={{ padding: 16 }}>
-      <h2>📊 Bedrijven die (waarschijnlijk) jouw data hebben</h2>
+      <h2>📊 Bedrijven die jouw data hebben</h2>
       <p>
         Voor: <b>{email}</b>
         {name ? <> — {name}</> : null}
       </p>
+{/* Show “scan again” when Gmail is connected */}
+{isGmail(email) && gmailStatus.hasToken && (
+  <div style={{ margin: "8px 0 16px" }}>
+    <ManualScanButton email={email} />
+    {gmailStatus.scannedAt && (
+      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+        Laatste scan: {new Date(gmailStatus.scannedAt).toLocaleString()}
+      </div>
+    )}
+  </div>
+)}
 
       {/* Gmail connect prompt */}
       {isGmail(email) && !gmailStatus.hasToken && !gmailStatus.scannedAt && (
