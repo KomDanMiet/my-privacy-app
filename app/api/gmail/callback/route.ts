@@ -20,26 +20,25 @@ type TokenResp = {
 };
 
 export async function GET(req: Request) {
+  const nowIso = new Date().toISOString();
   try {
     const url = new URL(req.url);
-
-    // Build a clean BASE from env or the request’s origin
     const BASE = (process.env.NEXT_PUBLIC_BASE_URL || url.origin)
       .trim()
-      .replace(/\s+/g, "")      // kill stray spaces
-      .replace(/\/+$/, "");     // remove trailing slash
-
+      .replace(/\s+/g, "")
+      .replace(/\/+$/, "");
     const REDIRECT_URI = `${BASE}/api/gmail/callback`;
 
-    // Read & decode params
     const code = url.searchParams.get("code");
     const stateRaw = url.searchParams.get("state") || "";
     const state = JSON.parse(Buffer.from(stateRaw, "base64url").toString("utf8") || "{}");
     const email = String(state?.email || "").toLowerCase().trim();
 
+    console.log("[GMAIL CALLBACK]", { t: nowIso, BASE, REDIRECT_URI, email, hasCode: !!code });
+
     if (!code) throw new Error("missing code");
 
-    // Exchange code -> tokens
+    // Exchange auth code → tokens
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -51,36 +50,44 @@ export async function GET(req: Request) {
         grant_type: "authorization_code",
       }),
     });
-    if (!tokenRes.ok) throw new Error(`token exchange failed: ${tokenRes.status}`);
-    const tokens = (await tokenRes.json()) as TokenResp;
 
-    // Normalize token payload
-    const now = Date.now();
+    const tokenText = await tokenRes.text();
+    if (!tokenRes.ok) {
+      console.error("[GMAIL CALLBACK] token exchange failed", tokenRes.status, tokenText);
+      throw new Error(`token exchange failed: ${tokenRes.status}`);
+    }
+    const tokens = JSON.parse(tokenText) as TokenResp;
     const tokenRecord = {
       ...tokens,
-      expiry_date: tokens.expiry_date ?? (tokens.expires_in ? now + tokens.expires_in * 1000 : undefined),
-      fetched_at: new Date().toISOString(),
+      expiry_date: tokens.expiry_date ?? (tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined),
+      fetched_at: nowIso,
     };
 
-    // Store in gmail_tokens(email, token_json)
+    // Store in Supabase
     const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    await sb.from("gmail_tokens").upsert(
+    const { error: upsertErr } = await sb.from("gmail_tokens").upsert(
       {
         email,
         token_json: JSON.stringify(tokenRecord),
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso,
       },
       { onConflict: "email" }
     );
+    if (upsertErr) {
+      console.error("[GMAIL CALLBACK] upsert error", upsertErr);
+      throw upsertErr;
+    }
 
-    // Build an ABSOLUTE return URL (Edge requires absolute)
+    // Absolute return URL (Edge/Node both accept absolute)
     const rawReturn = String(state?.returnTo || `/results?email=${encodeURIComponent(email)}`);
     const absoluteReturn = /^https?:\/\//i.test(rawReturn)
       ? rawReturn
       : `${BASE}${rawReturn.startsWith("/") ? "" : "/"}${rawReturn}`;
 
+    console.log("[GMAIL CALLBACK] success → redirect", { absoluteReturn });
     return NextResponse.redirect(absoluteReturn, { status: 302 });
   } catch (e: any) {
+    console.error("[GMAIL CALLBACK] error", e?.message || e);
     return NextResponse.json({ ok: false, error: e?.message || "callback error" }, { status: 400 });
   }
 }
