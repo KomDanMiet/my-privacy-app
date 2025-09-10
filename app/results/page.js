@@ -214,15 +214,13 @@ export default async function Results({ searchParams }) {
       )}
 
       {/* Auto scan when token exists but we have no data yet */}
-      {isGmail(email) && gmailStatus.hasToken && !hasAny && (
-        <div style={{ marginTop: 12 }}>
-          <div>
-            Geen resultaten gevonden in je database voor dit adres. We starten
-            nu een scan…
-          </div>
-          <AutoScanAndReload email={email} />
-        </div>
-      )}
+      {isGmail(email) && gmailStatus.hasToken && !hasAny && !gmailStatus.scannedAt && (
+  <div style={{ marginTop: 12 }}>
+    <div>Geen resultaten gevonden … We starten nu een scan…</div>
+    <AutoScanAndReload email={email} />
+  </div>
+)}
+
 
       {err && (
         <p style={{ color: "#f87171" }}>

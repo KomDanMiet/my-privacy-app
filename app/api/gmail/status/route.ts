@@ -15,13 +15,14 @@ export async function GET(req: Request) {
       .select("token_json, scanned_at")
       .eq("email", email)
       .maybeSingle();
+    console.log("[status] row:", data, error);
     if (error) throw error;
 
     if (!data) {
       return NextResponse.json({ ok: true, hasToken: false, isFresh: false, scannedAt: null });
     }
 
-    // token_json might be JSON (object) or JSON text (string) depending on insert code
+    // token_json may be JSON or string
     const raw = data.token_json;
     const obj = typeof raw === "string" ? JSON.parse(raw || "{}") : (raw || {});
     const expiry = Number(obj?.expiry_date ?? 0);
@@ -34,7 +35,7 @@ export async function GET(req: Request) {
       scannedAt: data.scanned_at ?? null,
     });
   } catch (e: any) {
-    console.error("[/api/gmail/status] error:", e);
+    console.error("[status] error:", e);
     return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
   }
 }
