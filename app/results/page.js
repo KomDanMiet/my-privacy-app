@@ -120,7 +120,7 @@ export default async function Results({ searchParams }) {
   const base = process.env.NEXT_PUBLIC_BASE_URL || "";
 
   // --- Gmail token status ---
-  let gmailStatus = { hasToken: false, isFresh: false };
+  let gmailStatus = { hasToken: false, isFresh: false, scannedAt: null };
   if (isGmail(email)) {
     try {
       const s = await fetch(
@@ -131,9 +131,10 @@ export default async function Results({ searchParams }) {
       gmailStatus = {
         hasToken: (sj?.hasToken ?? sj?.connected) ? true : false,
         isFresh: !!sj?.isFresh,
+        scannedAt: sj?.scannedAt ?? null,
       };
     } catch {
-      gmailStatus = { hasToken: false, isFresh: false };
+      gmailStatus = { hasToken: false, isFresh: false, scannedAt: null};
     }
   }
 
@@ -182,7 +183,7 @@ export default async function Results({ searchParams }) {
       </p>
 
       {/* Gmail connect prompt */}
-      {isGmail(email) && !gmailStatus.hasToken && (
+      {isGmail(email) && !gmailStatus.hasToken && !gmailStatus.scannedAt && (
         <div
           style={{
             margin: "12px 0",
