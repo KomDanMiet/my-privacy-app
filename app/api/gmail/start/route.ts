@@ -11,8 +11,12 @@ export async function GET(req: Request) {
 
   // Use env if set, otherwise the request's origin (e.g. https://discodruif.com or http://localhost:3000)
   const origin = url.origin;
-  const BASE = (process.env.NEXT_PUBLIC_BASE_URL || origin).replace(/\/+$/,"");
-  const REDIRECT_URI = `${BASE}/api/gmail/callback`;
+  const BASE = (process.env.NEXT_PUBLIC_BASE_URL || origin)
+  .trim()
+  .replace(/\s+/g, "")   // ← removes any accidental spaces
+  .replace(/\/+$/, "");  // ← removes trailing slash(es)
+
+const REDIRECT_URI = `${BASE}/api/gmail/callback`;
 
   const state = Buffer.from(JSON.stringify({
     email,
