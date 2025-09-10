@@ -9,7 +9,8 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
 const BASE = process.env.NEXT_PUBLIC_BASE_URL!;
-const REDIRECT_URI = `${BASE}/api/gmail/callback`;
+const REDIRECT_URI = `https://discodruif.com/api/gmail/callback
+`;
 
 type TokenResp = {
   access_token: string;
