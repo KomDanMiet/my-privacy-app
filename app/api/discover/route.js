@@ -16,23 +16,15 @@ const normEmail = (s) => (s || "").toLowerCase().trim();
 
 async function topDomainsFor(email, take = 50) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  // New snapshot table shape: one row per (email, domain) with "count"
   const { data, error } = await sb
     .from("discovered_senders")
-    .select("domain")
+    .select("domain,count")
     .eq("email", email)
-    .limit(2000);
+    .order("count", { ascending: false })
+    .limit(take);
   if (error) throw error;
-
-  const counts = new Map();
-  for (const row of data || []) {
-    const d = (row.domain || "").toLowerCase();
-    if (!d) continue;
-    counts.set(d, (counts.get(d) || 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, take)
-    .map(([domain]) => domain);
+  return (data || []).map((r) => r.domain);
 }
 
 async function lookupContact(domain, force = false, origin) {

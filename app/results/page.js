@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import ScanAgainButton from "@/components/ScanAgainButton";
 import { redirect } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import DsarButton from "@/components/DsarButton";
@@ -232,7 +233,11 @@ export default async function Results({ searchParams }) {
   </div>
 )}
 
-
+{isGmail(email) && gmailStatus.hasToken && (
+  <div style={{ margin: "12px 0" }}>
+    <ScanAgainButton email={email} />
+  </div>
+)}
       {err && (
         <p style={{ color: "#f87171" }}>
           Kon resultaten niet volledig laden: {err}
