@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   .trim()
   .replace(/\s+/g, "")   // ← removes any accidental spaces
   .replace(/\/+$/, "");  // ← removes trailing slash(es)
-
+  const returnToAbs = `${BASE}/results?email=${encodeURIComponent(email)}`;
 const REDIRECT_URI = `${BASE}/api/gmail/callback`;
 
   const state = Buffer.from(JSON.stringify({
