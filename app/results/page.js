@@ -7,7 +7,6 @@ import DsarButton from "@/components/DsarButton";
 import DsarList from "@/components/DsarList";
 import VerifyGate from "@/components/VerifyGate";
 import AutoScanAndReload from "@/components/AutoScanAndReload";
-import ManualScanButton from "@/components/ManualScanButton";
 function Section({ title, hint, items = [], email, name }) {
   return (
     <section style={{ marginBottom: 28 }}>
@@ -182,61 +181,45 @@ export default async function Results({ searchParams }) {
         Voor: <b>{email}</b>
         {name ? <> — {name}</> : null}
       </p>
-{/* Show “scan again” when Gmail is connected */}
-{isGmail(email) && gmailStatus.hasToken && (
-  <div style={{ margin: "8px 0 16px" }}>
-    <ManualScanButton email={email} />
-    {gmailStatus.scannedAt && (
-      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-        Laatste scan: {new Date(gmailStatus.scannedAt).toLocaleString()}
+{/* Controls (exactly one shows at a time) */}
+{isGmail(email) && (
+  <>
+    {/* 1) Connect CTA */}
+    {!gmailStatus.hasToken && !gmailStatus.scannedAt && (
+      <div style={{ margin: "12px 0", padding: 12, border: "1px dashed #555", borderRadius: 8 }}>
+        <div style={{ marginBottom: 8 }}>
+          <b>Eenmalige machtiging nodig</b><br/>
+          We lezen alléén afzender-adressen om bedrijven te herkennen (geen inhoud).
+        </div>
+        <a
+          href={`/api/gmail/start?email=${encodeURIComponent(email)}`}
+          style={{ padding: "8px 12px", borderRadius: 6, background: "#0ea5e9", color: "#fff", textDecoration: "none" }}
+        >
+          Koppel Gmail en ontdek bedrijven
+        </a>
       </div>
     )}
-  </div>
-)}
 
-      {/* Gmail connect prompt */}
-      {isGmail(email) && !gmailStatus.hasToken && !gmailStatus.scannedAt && (
-        <div
-          style={{
-            margin: "12px 0",
-            padding: 12,
-            border: "1px dashed #555",
-            borderRadius: 8,
-          }}
-        >
-          <div style={{ marginBottom: 8 }}>
-            <b>Eenmalige machtiging nodig</b>
-            <br />
-            We lezen alléén afzender-adressen om bedrijven te herkennen (geen
-            inhoud).
+    {/* 2) Auto scan when token exists but we have no results yet */}
+    {gmailStatus.hasToken && !hasAny && !gmailStatus.scannedAt && (
+      <div style={{ marginTop: 12 }}>
+        <div>Geen resultaten gevonden… We starten nu een scan…</div>
+        <AutoScanAndReload email={email} />
+      </div>
+    )}
+
+    {/* 3) Manual scan when we already have some results */}
+    {gmailStatus.hasToken && hasAny && (
+      <div style={{ margin: "12px 0 16px" }}>
+        <ScanAgainButton email={email} />
+        {gmailStatus.scannedAt && (
+          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+            Laatste scan: {new Date(gmailStatus.scannedAt).toLocaleString()}
           </div>
-          <a
-            href={`/api/gmail/start?email=${encodeURIComponent(email)}`}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 6,
-              background: "#0ea5e9",
-              color: "#fff",
-              textDecoration: "none",
-            }}
-          >
-            Koppel Gmail en ontdek bedrijven
-          </a>
-        </div>
-      )}
-
-      {/* Auto scan when token exists but we have no data yet */}
-      {isGmail(email) && gmailStatus.hasToken && !hasAny && !gmailStatus.scannedAt && (
-  <div style={{ marginTop: 12 }}>
-    <div>Geen resultaten gevonden … We starten nu een scan…</div>
-    <AutoScanAndReload email={email} />
-  </div>
-)}
-
-{isGmail(email) && gmailStatus.hasToken && (
-  <div style={{ margin: "12px 0" }}>
-    <ScanAgainButton email={email} />
-  </div>
+        )}
+      </div>
+    )}
+  </>
 )}
       {err && (
         <p style={{ color: "#f87171" }}>
