@@ -1,192 +1,274 @@
-export const runtime = "nodejs";
-
+// app/api/gmail/scan/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+
+type GmailTokens = {
+  id: string;
+  user_id: string;
+  access_token: string;
+  refresh_token: string | null;
+  expiry_date: string | null;             // ISO string
+  provider_account_id: string;            // Gmail userId
+  revoked: boolean | null;
+  last_history_id: string | null;         // for delta scans
+};
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
-function extractDomain(fromValue = ""): string | null {
-  const m = fromValue.toLowerCase().match(/[^\s<@"']+@([^\s>@"']+)/);
-  if (!m) return null;
-  let d = m[1].trim().replace(/^www\./, "");
-  if (["gmail.com", "googlemail.com", "smtp.gmail.com"].includes(d)) return null;
-  return d;
-}
-
-async function refreshToken(tokenJson: any) {
-  if (!tokenJson?.refresh_token) return tokenJson;
-  try {
-    const params = new URLSearchParams();
-    params.set("client_id", process.env.GOOGLE_CLIENT_ID!);
-    params.set("client_secret", process.env.GOOGLE_CLIENT_SECRET!);
-    params.set("grant_type", "refresh_token");
-    params.set("refresh_token", tokenJson.refresh_token);
-
-    const r = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
-
-    if (!r.ok) return tokenJson;
-    const j = await r.json();
-
-    return {
-      ...tokenJson,
-      access_token: j.access_token,
-      token_type: j.token_type || tokenJson.token_type || "Bearer",
-      scope: j.scope || tokenJson.scope,
-      expires_in: j.expires_in,
-      expiry_date: j.expires_in ? Date.now() + Number(j.expires_in) * 1000 : tokenJson.expiry_date,
-    };
-  } catch {
-    return tokenJson;
-  }
-}
-
-async function gmailListMessages(accessToken: string, q: string, max = 300) {
-  const ids: string[] = [];
-  let pageToken: string | undefined;
-
-  while (ids.length < max) {
-    const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-    url.searchParams.set("maxResults", "100");
-    url.searchParams.set("q", q);
-    if (pageToken) url.searchParams.set("pageToken", pageToken);
-
-    const r = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!r.ok) {
-      const t = await r.text().catch(() => "");
-      throw new Error(`gmail list failed ${r.status}: ${t}`);
-    }
-    const j = await r.json();
-    (j.messages || []).forEach((m: any) => ids.push(m.id));
-    pageToken = j.nextPageToken;
-    if (!pageToken) break;
-  }
-  return ids.slice(0, max);
-}
-
-async function gmailGetFromHeader(accessToken: string, id: string) {
-  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Return-Path`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!r.ok) return null;
-  const j = await r.json();
-  const headers: Array<{ name: string; value: string }> = j?.payload?.headers || [];
-  const from = headers.find(h => h.name.toLowerCase() === "from")?.value
-            || headers.find(h => h.name.toLowerCase() === "return-path")?.value
-            || "";
-  return from;
-}
+const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1";
+const OAUTH_TOKEN = "https://oauth2.googleapis.com/token";
 
 export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
-  const email = String(body.email || "").toLowerCase().trim();
-  const days = Math.max(7, Math.min(3650, Number(body.days ?? 365))); // default 1y
-  const hardCap = Math.max(50, Math.min(1000, Number(body.max ?? 300))); // default 300
+  const { userId } = await req.json().catch(() => ({}));
+  if (!userId) return NextResponse.json({ error: "Missing userId" }, { status: 400 });
 
-  if (!email) {
-    return NextResponse.json({ ok: false, error: "missing email" }, { status: 400 });
+  // 1) Load tokens (NO generic on .from)
+  const { data: tokRaw, error: tokErr } = await sb
+    .from("gmail_tokens")
+    .select("*")
+    .eq("user_id", userId)
+    .or("revoked.is.null,revoked.eq.false") // handle null or false
+    .maybeSingle();
+
+  const tok = tokRaw as GmailTokens | null;
+
+  if (tokErr || !tok) {
+    return NextResponse.json({ error: "Gmail not connected" }, { status: 401 });
   }
 
-  // Optional: prevent overlapping scans
-  try {
-    const { data: row } = await sb.from("gmail_tokens").select("scanning").eq("email", email).maybeSingle();
-    if (row?.scanning) {
-      return NextResponse.json({ ok: true, skipped: true, reason: "already_scanning" });
-    }
-    await sb.from("gmail_tokens").update({ scanning: true }).eq("email", email);
-  } catch {}
+  const nowIso = new Date().toISOString();
 
-  try {
-    // 1) load token
-    const { data: tokRow, error: tokErr } = await sb
+  // Helper: backoff for transient errors
+  const doGmail = async (url: string, init: RequestInit, attempt = 0): Promise<Response> => {
+    const res = await fetch(url, init);
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+      const retryAfter = Number(res.headers.get("retry-after")) || Math.min(2 ** attempt * 300, 2000);
+      await new Promise((r) => setTimeout(r, retryAfter));
+      return doGmail(url, init, attempt + 1);
+    }
+    return res;
+  };
+
+  // 2) Ensure valid access token (simple time check)
+  let accessToken = tok.access_token;
+  const isExpired = tok.expiry_date && Date.parse(tok.expiry_date) - Date.now() < 30_000;
+
+  const refreshOnce = async () => {
+    if (!tok.refresh_token) return { error: "no_refresh_token" as const };
+
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: tok.refresh_token,
+      client_id: process.env.GOOGLE_CLIENT_ID!,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+    });
+
+    const r = await fetch(OAUTH_TOKEN, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+
+    const j = await r.json().catch(() => ({} as any));
+    if (!r.ok) {
+      // Mark revoked on invalid_grant
+      if (j?.error === "invalid_grant") {
+        await sb.from("gmail_tokens").update({ revoked: true }).eq("id", tok.id);
+        return { error: "invalid_grant" as const };
+      }
+      return { error: "refresh_failed" as const };
+    }
+
+    const newExpiry = j.expires_in ? new Date(Date.now() + j.expires_in * 1000).toISOString() : null;
+    const { error: upErr } = await sb
       .from("gmail_tokens")
-      .select("token_json")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (tokErr) throw tokErr;
-    if (!tokRow?.token_json) {
-      return NextResponse.json({ ok: false, error: "no token for this email" }, { status: 404 });
-    }
-
-    let tokenJson =
-      typeof tokRow.token_json === "string" ? JSON.parse(tokRow.token_json) : tokRow.token_json;
-
-    // 2) refresh if needed
-    const isExpired = tokenJson?.expiry_date && Number(tokenJson.expiry_date) < Date.now() - 30_000;
-    if (!tokenJson?.access_token || isExpired) {
-      tokenJson = await refreshToken(tokenJson);
-      await sb
-        .from("gmail_tokens")
-        .update({ token_json: tokenJson, updated_at: new Date().toISOString() })
-        .eq("email", email);
-    }
-
-    const access = tokenJson?.access_token;
-    if (!access) {
-      return NextResponse.json({ ok: false, error: "no usable access_token" }, { status: 401 });
-    }
-
-    // 3) list & fetch with small concurrency
-    const q = `newer_than:${Math.ceil(days / 30)}m`;
-    const ids = await gmailListMessages(access, q, hardCap);
-
-    const domainCounts = new Map<string, number>();
-    let fetched = 0;
-
-    const CONCURRENCY = 10;
-    let i = 0;
-    await Promise.all(
-      Array.from({ length: CONCURRENCY }).map(async () => {
-        while (i < ids.length) {
-          const id = ids[i++];
-          const fromVal = await gmailGetFromHeader(access, id);
-          if (!fromVal) continue;
-          const d = extractDomain(fromVal);
-          if (!d) continue;
-          domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
-          fetched++;
-        }
+      .update({
+        access_token: j.access_token,
+        expiry_date: newExpiry,
+        revoked: false,
       })
+      .eq("id", tok.id);
+
+    if (upErr) return { error: "token_update_failed" as const };
+
+    accessToken = j.access_token as string;
+    return { ok: true as const };
+  };
+
+  if (isExpired) {
+    const rr = await refreshOnce();
+    if (rr && "error" in rr) {
+      const code =
+        rr.error === "invalid_grant" ? 401 :
+        rr.error === "no_refresh_token" ? 400 :
+        500;
+      return NextResponse.json({ error: rr.error }, { status: code });
+    }
+  }
+
+  // 3) Determine scan window
+  const { data: scanMeta } = await sb
+    .from("gmail_scan_meta")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const lastScanAt = scanMeta?.scanned_at ? new Date(scanMeta.scanned_at) : null;
+  const afterQuery = lastScanAt ? ` after:${Math.floor(lastScanAt.getTime() / 1000)}` : "";
+  const q = `-SPAM -TRASH${afterQuery}`.trim();
+
+  const useHistory = Boolean(tok.last_history_id);
+  let domains: string[] = [];
+  let scannedCount = 0;
+  let newLastHistoryId: string | null = null;
+
+  const authHeaders = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  const extractDomain = (fromValue = ""): string | null => {
+    const m = fromValue.toLowerCase().match(/[^\s<@"']+@([^\s>@"']+)/);
+    if (!m) return null;
+    let d = m[1].trim().replace(/^www\./, "");
+    if (["gmail.com", "googlemail.com", "smtp.gmail.com"].includes(d)) return null;
+    return d;
+  };
+
+  // --- A) History-based delta ---
+  const scanViaHistory = async () => {
+    let pageToken: string | undefined;
+    let historyId = tok.last_history_id!;
+    do {
+      const url = new URL(`${GMAIL_BASE}/users/me/history`);
+      url.searchParams.set("startHistoryId", historyId);
+      url.searchParams.set("historyTypes", "messageAdded");
+      url.searchParams.set("maxResults", "500");
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      url.searchParams.set("fields", "history(id,messagesAdded(message(id))),historyId,nextPageToken");
+
+      let res = await doGmail(url.toString(), { headers: authHeaders(accessToken) });
+      if (res.status === 401) {
+        const rr = await refreshOnce();
+        if (rr && "error" in rr) return { error: "auth_failed" as const };
+        res = await doGmail(url.toString(), { headers: authHeaders(accessToken) });
+      }
+      if (!res.ok) return { error: `history_${res.status}` as const };
+
+      const j = await res.json();
+      const ids: string[] =
+        j?.history?.flatMap((h: any) => h.messagesAdded?.map((m: any) => m.message.id) ?? []) ?? [];
+      newLastHistoryId = j?.historyId || newLastHistoryId;
+
+      for (const id of ids) {
+        const gUrl = new URL(`${GMAIL_BASE}/users/me/messages/${id}`);
+        gUrl.searchParams.set("format", "metadata");
+        gUrl.searchParams.set("metadataHeaders", "From");
+        gUrl.searchParams.set("fields", "id,payload/headers");
+        let r = await doGmail(gUrl.toString(), { headers: authHeaders(accessToken) });
+        if (r.status === 401) {
+          const rr = await refreshOnce();
+          if (rr && "error" in rr) return { error: "auth_failed" as const };
+          r = await doGmail(gUrl.toString(), { headers: authHeaders(accessToken) });
+        }
+        if (!r.ok) continue;
+        const msg = await r.json();
+        const from = msg?.payload?.headers?.find((h: any) => h.name === "From")?.value || "";
+        const d = extractDomain(from);
+        if (d) domains.push(d);
+        scannedCount++;
+      }
+
+      pageToken = j?.nextPageToken;
+    } while (pageToken);
+
+    return { ok: true as const };
+  };
+
+  // --- B) Query-based list ---
+  const scanViaQuery = async () => {
+    let pageToken: string | undefined;
+    do {
+      const url = new URL(`${GMAIL_BASE}/users/me/messages`);
+      url.searchParams.set("q", q);
+      url.searchParams.set("maxResults", "500");
+      url.searchParams.set("fields", "messages/id,nextPageToken");
+
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+      let res = await doGmail(url.toString(), { headers: authHeaders(accessToken) });
+      if (res.status === 401) {
+        const rr = await refreshOnce();
+        if (rr && "error" in rr) return { error: "auth_failed" as const };
+        res = await doGmail(url.toString(), { headers: authHeaders(accessToken) });
+      }
+      if (!res.ok) return { error: `list_${res.status}` as const };
+
+      const j = await res.json();
+      const ids: string[] = j?.messages?.map((m: any) => m.id) ?? [];
+      pageToken = j?.nextPageToken;
+
+      for (const id of ids) {
+        const gUrl = new URL(`${GMAIL_BASE}/users/me/messages/${id}`);
+        gUrl.searchParams.set("format", "metadata");
+        gUrl.searchParams.set("metadataHeaders", "From");
+        gUrl.searchParams.set("fields", "id,payload/headers,historyId");
+        const r = await doGmail(gUrl.toString(), { headers: authHeaders(accessToken) });
+        if (!r.ok) continue;
+        const msg = await r.json();
+        const from = msg?.payload?.headers?.find((h: any) => h.name === "From")?.value || "";
+        const d = extractDomain(from);
+        if (d) domains.push(d);
+        scannedCount++;
+        const h = msg?.historyId;
+        if (h && (!newLastHistoryId || BigInt(h) > BigInt(newLastHistoryId))) newLastHistoryId = String(h);
+      }
+    } while (pageToken);
+
+    return { ok: true as const };
+  };
+
+  const scanRes = useHistory ? await scanViaHistory() : await scanViaQuery();
+  if (scanRes && "error" in scanRes) {
+    return NextResponse.json({ error: scanRes.error }, { status: 502 });
+  }
+
+  // 4) Upsert domains → jouw kolommen (last_seen + source)
+  const unique = Array.from(new Set(domains.map((d) => d.toLowerCase())));
+  if (unique.length) {
+    const rows = unique.map((d) => ({
+      user_id: userId,
+      domain: d,
+      source: "gmail",
+      last_seen: nowIso, // jouw schema
+    }));
+    await sb.from("discovered_senders").upsert(rows, {
+      onConflict: "user_id,domain",
+      ignoreDuplicates: false,
+    });
+  }
+
+  // 5) Update scan metadata + last_history_id
+  await sb
+    .from("gmail_scan_meta")
+    .upsert(
+      {
+        user_id: userId,
+        scanned_at: nowIso,
+        last_count: scannedCount,
+        last_unique_domains: unique.length,
+      },
+      { onConflict: "user_id" }
     );
 
-    const nowIso = new Date().toISOString();
-
-    if (domainCounts.size) {
-      const rows = Array.from(domainCounts.entries()).map(([domain, count]) => ({
-        email,
-        domain,
-        count,
-        last_seen: nowIso,
-        created_at: nowIso,
-        updated_at: nowIso,
-      }));
-
-      const { error: upErr } = await sb
-        .from("discovered_senders")
-        .upsert(rows, { onConflict: "email,domain" });
-
-      if (upErr) throw upErr;
-    }
-
-    await sb.from("gmail_tokens").update({ scanned_at: nowIso, updated_at: nowIso, scanning: false }).eq("email", email);
-
-    return NextResponse.json({
-      ok: true,
-      email,
-      scanned: fetched,
-      uniqueDomains: domainCounts.size,
-      sample: Array.from(domainCounts.keys()).slice(0, 10),
-    });
-  } catch (e: any) {
-    // clear scanning flag even on error
-    await sb.from("gmail_tokens").update({ scanning: false }).eq("email", email);
-    return NextResponse.json({ ok: false, error: e?.message || "scan failed" }, { status: 500 });
+  if (newLastHistoryId) {
+    await sb.from("gmail_tokens").update({ last_history_id: newLastHistoryId }).eq("id", tok.id);
   }
+
+  return NextResponse.json({
+    ok: true,
+    scanned_at: nowIso,
+    scanned_count: scannedCount,
+    unique_domains: unique.length,
+    sample_domains: unique.slice(0, 10),
+  });
 }
