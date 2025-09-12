@@ -8,10 +8,28 @@ import type { Database, TablesInsert } from "@/types/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// ---- service client (for DB writes with service role) ----
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const sb = createClient<Database>(SUPABASE_URL, SERVICE_KEY);
+
+// Gmail endpoints
+const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1";
+const OAUTH_TOKEN = "https://oauth2.googleapis.com/token";
+
+// Shape of your stored token_json
+type GoogleToken = {
+  access_token: string;
+  refresh_token?: string;
+  expiry_date?: number; // ms since epoch
+  expires_in?: number;  // seconds (when freshly refreshed)
+};
+
 export async function POST() {
-  // ⬇️ NEXT 15: cookies() returns a Promise
+  // Next 15: cookies() is async in route handlers
   const cookieStore = await cookies();
 
+  // SSR client bound to request cookies (for reading the logged-in user)
   const supaSSR = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -28,11 +46,17 @@ export async function POST() {
     }
   );
 
-  // ...rest of your handler (unchanged) ...
+  // ---- get the authenticated user ----
+  const {
+    data: { user },
+  } = await supaSSR.auth.getUser();
 
+  if (!user) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+  const userId = user.id;
 
-
-  // 1) Load token
+  // ---- load Gmail token from DB ----
   const { data: tok, error: tokErr } = await sb
     .from("gmail_tokens")
     .select("email, token_json")
@@ -50,7 +74,7 @@ export async function POST() {
 
   let accessToken = token.access_token;
 
-  // Helpers
+  // ---- helpers ----
   const doGmail = async (url: string, init: RequestInit, attempt = 0): Promise<Response> => {
     const res = await fetch(url, init);
     if (res.status === 429 || res.status >= 500) {
@@ -93,16 +117,13 @@ export async function POST() {
   // Refresh if near expiry
   const msLeft =
     typeof token.expiry_date === "number" ? token.expiry_date - Date.now() : Number.POSITIVE_INFINITY;
-  if (msLeft < 30_000) {
-    await tryRefresh();
-  }
+  if (msLeft < 30_000) await tryRefresh();
 
   const nowIso = new Date().toISOString();
   const domains: string[] = [];
   let scannedCount = 0;
 
   const authHeaders = (t: string) => ({ Authorization: `Bearer ${t}` });
-
   const extractDomain = (fromValue = ""): string | null => {
     const m = fromValue.toLowerCase().match(/[^\s<@"']+@([^\s>@"']+)/);
     if (!m) return null;
@@ -111,7 +132,7 @@ export async function POST() {
     return d;
   };
 
-  // 2) Simple query-based scan
+  // ---- scan via query ----
   const q = "-SPAM -TRASH";
   let pageToken: string | undefined;
 
@@ -152,7 +173,7 @@ export async function POST() {
     }
   } while (pageToken);
 
-  // 3) Upsert discovered domains
+  // ---- upsert discovered domains ----
   type DSInsert = TablesInsert<"discovered_senders">;
   const unique = Array.from(new Set(domains));
 
@@ -168,7 +189,7 @@ export async function POST() {
     await sb.from("discovered_senders").upsert(rows, { onConflict: "user_id,domain" });
   }
 
-  // 4) Update scan meta (if you created this table/columns)
+  // ---- update scan meta (if you have this table) ----
   await sb
     .from("gmail_scan_meta")
     .upsert(
