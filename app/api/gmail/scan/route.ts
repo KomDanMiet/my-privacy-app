@@ -1,33 +1,36 @@
 // app/api/gmail/scan/route.ts
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import type { Database, TablesInsert } from "@/types/supabase";
 
-// If you’re on the Edge runtime, uncomment the next line or switch to Node:
-// export const runtime = "nodejs";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+export async function POST() {
+  // ⬇️ NEXT 15: cookies() returns a Promise
+  const cookieStore = await cookies();
 
-// Use two type params to satisfy older @supabase/supabase-js typings across setups
-const sb = createClient<Database, "public">(SUPABASE_URL, SERVICE_KEY);
+  const supaSSR = createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get: (name: string) => cookieStore.get(name)?.value,
+        set: (name: string, value: string, options: any) => {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove: (name: string, options: any) => {
+          cookieStore.set({ name, value: "", ...options });
+        },
+      },
+    }
+  );
 
-// Gmail endpoints
-const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1";
-const OAUTH_TOKEN = "https://oauth2.googleapis.com/token";
+  // ...rest of your handler (unchanged) ...
 
-type GoogleToken = {
-  access_token: string;
-  refresh_token?: string;
-  expiry_date?: number; // ms since epoch
-  expires_in?: number;  // seconds
-};
 
-export async function POST(req: Request) {
-  const { userId } = await req.json().catch(() => ({}));
-  if (!userId) {
-    return NextResponse.json({ error: "Missing userId" }, { status: 400 });
-  }
 
   // 1) Load token
   const { data: tok, error: tokErr } = await sb
@@ -83,20 +86,13 @@ export async function POST(req: Request) {
         typeof j.expires_in === "number" ? Date.now() + j.expires_in * 1000 : token.expiry_date,
     };
 
-    // token_json is JSON in your schema—cast to any to satisfy TS
-    await sb
-      .from("gmail_tokens")
-      .update({ token_json: nextToken as any })
-      .eq("user_id", userId);
-
+    await sb.from("gmail_tokens").update({ token_json: nextToken as any }).eq("user_id", userId);
     return true;
   };
 
+  // Refresh if near expiry
   const msLeft =
-    typeof token.expiry_date === "number"
-      ? token.expiry_date - Date.now()
-      : Number.POSITIVE_INFINITY;
-
+    typeof token.expiry_date === "number" ? token.expiry_date - Date.now() : Number.POSITIVE_INFINITY;
   if (msLeft < 30_000) {
     await tryRefresh();
   }
@@ -169,16 +165,21 @@ export async function POST(req: Request) {
       last_seen: nowIso,
     }));
 
-    await sb
-      .from("discovered_senders")
-      .upsert(rows, { onConflict: "user_id,domain" }); // matches your unique index
+    await sb.from("discovered_senders").upsert(rows, { onConflict: "user_id,domain" });
   }
 
-  // (Optional) update a gmail_scan_meta row here if you’ve created that table.
-  await sb.from("gmail_scan_meta").upsert(
-     { user_id: userId, scanned_at: nowIso, last_count: scannedCount, last_unique_domains: unique.length },
-     { onConflict: "user_id" }
-   );
+  // 4) Update scan meta (if you created this table/columns)
+  await sb
+    .from("gmail_scan_meta")
+    .upsert(
+      {
+        user_id: userId,
+        scanned_at: nowIso,
+        last_count: scannedCount,
+        last_unique_domains: unique.length,
+      } as any,
+      { onConflict: "user_id" }
+    );
 
   return NextResponse.json({
     ok: true,
