@@ -955,6 +955,30 @@ export type Database = {
         }
         Relationships: []
       }
+      gmail_scan_meta: {
+        Row: {
+          last_count: number
+          last_error_code: string | null
+          last_unique_domains: number
+          scanned_at: string
+          user_id: string
+        }
+        Insert: {
+          last_count?: number
+          last_error_code?: string | null
+          last_unique_domains?: number
+          scanned_at?: string
+          user_id: string
+        }
+        Update: {
+          last_count?: number
+          last_error_code?: string | null
+          last_unique_domains?: number
+          scanned_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       gmail_tokens: {
         Row: {
           created_at: string
