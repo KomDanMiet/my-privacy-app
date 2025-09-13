@@ -1,47 +1,39 @@
-// app/api/gmail/start/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-import type { Database } from "@/types/supabase";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 
 export async function GET() {
-  const site = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  const redirectTo = new URL("/auth/callback", site).toString();
+  const site = process.env.NEXT_PUBLIC_SITE_URL!;
+  const redirectUri = `${site}/api/gmail/callback`;
 
-  // In your environment cookies() is async and readonly
-  const cookieStore = await cookies();
+  // Generate CSRF state
+  const state = Math.random().toString(36).slice(2);
 
-  const supabase = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
-    {
-      cookies: {
-        get: (name: string) => cookieStore.get(name)?.value,
-        // Starting OAuth doesn’t need to *set* cookies here; no-ops satisfy the type.
-        set: () => {},
-        remove: () => {},
-      },
-    }
-  );
-
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo,
-      scopes:
-        "https://www.googleapis.com/auth/gmail.readonly openid email profile",
-    },
+  // Save state in a short-lived cookie (httpOnly not required for this simple check)
+  const jar = await cookies();
+  jar.set("gmail_oauth_state", state, {
+    path: "/",
+    maxAge: 60 * 10, // 10 min
+    sameSite: "lax",
   });
 
-  if (error || !data?.url) {
-    return NextResponse.json(
-      { error: error?.message || "Could not start Google OAuth" },
-      { status: 500 }
-    );
-  }
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID!,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    access_type: "offline",
+    include_granted_scopes: "true",
+    scope: [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "openid",
+    ].join(" "),
+    prompt: "consent", // ensures refresh_token the first time
+    state,
+  });
 
-  return NextResponse.redirect(data.url);
+  const url = `${GOOGLE_AUTH}?${params.toString()}`;
+  return NextResponse.redirect(url, { status: 302 });
 }
