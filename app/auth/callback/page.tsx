@@ -14,10 +14,19 @@ export default function AuthCallback() {
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
       );
 
-      // Magic link can arrive as `#code=...` (latest) or `#access_token=...`
       const hash = window.location.hash.replace(/^#/, "");
       const params = new URLSearchParams(hash);
 
+      // helper: start scan but don't crash if it fails
+      const startScan = async () => {
+        try {
+          await fetch("/api/gmail/scan", { method: "POST" });
+        } catch {
+          /* ignore — maybe Gmail not connected yet */
+        }
+      };
+
+      // New-style magic link: #code=...
       const code = params.get("code");
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -26,11 +35,12 @@ export default function AuthCallback() {
           setMsg("Could not get session from magic link.");
           return;
         }
+        await startScan();
         window.location.replace("/dashboard");
         return;
       }
 
-      // Fallback for older links
+      // Fallback: #access_token=...&refresh_token=...
       const access_token = params.get("access_token");
       const refresh_token = params.get("refresh_token");
       if (access_token && refresh_token) {
@@ -40,6 +50,7 @@ export default function AuthCallback() {
           setMsg("Could not get session from magic link.");
           return;
         }
+        await startScan();
         window.location.replace("/dashboard");
         return;
       }
