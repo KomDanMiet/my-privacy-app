@@ -17,7 +17,7 @@ export default async function SettingsPage() {
     );
   }
 
-  const { data: tok } = await supabase
+  const { data: tok, error } = await supabase
     .from("gmail_tokens")
     .select("email")
     .eq("user_id", user.id)
@@ -26,8 +26,10 @@ export default async function SettingsPage() {
   return (
     <main style={{ padding: 24 }}>
       <h1>Settings</h1>
+
       <section style={{ marginTop: 16 }}>
         <h2>Gmail</h2>
+        {error && <p style={{color:"#b91c1c"}}>Error: {error.message}</p>}
         {tok?.email ? (
           <p>Connected as <b>{tok.email}</b></p>
         ) : (
