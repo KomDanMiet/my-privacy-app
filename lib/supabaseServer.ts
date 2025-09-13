@@ -4,22 +4,19 @@ import { createServerClient } from "@supabase/ssr";
 import type { Database } from "@/types/supabase";
 
 export async function getSupabaseServer() {
-  // Next 15: cookies() is async
-  const cookieStore = await cookies();
+  const store = await cookies(); // Next 15
 
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL as string,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options?: any) {
-          cookieStore.set({ name, value, ...(options ?? {}) });
-        },
-        remove(name: string, options?: any) {
-          cookieStore.set({ name, value: "", ...(options ?? {}) });
+        // hand the whole cookie jar to Supabase
+        getAll: () => store.getAll(),
+        setAll: (cookies) => {
+          cookies.forEach(({ name, value, ...options }) => {
+            store.set({ name, value, ...options });
+          });
         },
       },
     }
