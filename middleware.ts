@@ -10,32 +10,25 @@ export const config = {
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  // If env is missing in Edge, bail early to avoid 500s
-  if (!url || !key) return res;
-
-  const supabase = createServerClient<Database>(url, key, {
-    cookies: {
-      get(name: string) {
-        return req.cookies.get(name)?.value;
+  const supabase = createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return req.cookies.getAll();
+        },
+        setAll(cookies) {
+          cookies.forEach(({ name, value, ...options }) => {
+            res.cookies.set({ name, value, ...options });
+          });
+        },
       },
-      set(name: string, value: string, options: any) {
-        res.cookies.set({ name, value, ...options });
-      },
-      remove(name: string, options: any) {
-        res.cookies.set({ name, value: "", ...options });
-      },
-    },
-  });
+    }
+  );
 
-  try {
-    // Touch session so Supabase can refresh cookies if needed
-    await supabase.auth.getSession();
-  } catch {
-    // ignore — we only want cookie refresh side effects
-  }
+  // Touch auth so Supabase can refresh cookies when needed
+  await supabase.auth.getUser().catch(() => {});
 
   return res;
 }
