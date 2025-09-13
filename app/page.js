@@ -80,7 +80,9 @@ export default function Home() {
         // netjes opruimen
         localStorage.removeItem("pendingUser");
         // door naar resultaten zonder opnieuw invullen
-        router.push(`/results?email=${encodeURIComponent(email)}&name=${encodeURIComponent(finalName)}`);
+        router.push(
+          `/results?email=${encodeURIComponent(email)}&name=${encodeURIComponent(finalName)}`
+        );
         return true;
       }
       if (showToast) setMsg("Nog niet geverifieerd. Probeer het over een moment opnieuw.");
@@ -97,6 +99,22 @@ export default function Home() {
     <main style={{ padding: 24, fontFamily: "sans-serif", maxWidth: 520 }}>
       <h1>My Privacy App</h1>
       <p>Welkom! Hier kun je straks zien welke bedrijven je data hebben.</p>
+
+      {/* 🔽 Snel naar dashboard & settings */}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button
+          onClick={() => router.push("/dashboard")}
+          style={{ padding: "8px 10px", borderRadius: 6, background: "#0ea5e9", color: "#fff", border: "none" }}
+        >
+          Naar Dashboard
+        </button>
+        <button
+          onClick={() => router.push("/settings")}
+          style={{ padding: "8px 10px", borderRadius: 6, background: "#e5e7eb", color: "#111", border: "1px solid #cbd5e1" }}
+        >
+          Naar Settings
+        </button>
+      </div>
 
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, marginTop: 16 }}>
         <input
