@@ -1,7 +1,14 @@
 export const runtime = "edge";
 
 import SettingsClient from "./settings-client";
+// app/dashboard/page.tsx (top of file)
+import { redirect } from "next/navigation";
+import { getSupabaseServer } from "@/lib/supabaseServer";
 
+// inside component:
+const supabase = await getSupabaseServer();
+const { data: { user } } = await supabase.auth.getUser();
+if (!user) redirect("/auth/login");
 export const metadata = {
   title: "Settings — Disco Druif",
   description: "Manage your connections and privacy settings.",

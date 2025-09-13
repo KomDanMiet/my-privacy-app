@@ -1,6 +1,11 @@
-// app/dashboard/page.tsx
+// app/dashboard/page.tsx (top of file)
+import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
+// inside component:
+const supabase = await getSupabaseServer();
+const { data: { user } } = await supabase.auth.getUser();
+if (!user) redirect("/auth/login");
 export default async function Dashboard() {
   // 🔑 hier await gebruiken
   const supabase = await getSupabaseServer();

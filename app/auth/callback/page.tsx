@@ -2,29 +2,33 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export default function AuthCallback() {
   const router = useRouter();
+  const params = useSearchParams();
 
   useEffect(() => {
-    const run = async () => {
-      const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
+    (async () => {
+      const code = params.get("code");
+      if (!code) {
+        console.error("No auth code in callback URL");
+        return;
+      }
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) {
+        console.error("Auth error:", error.message);
+      } else {
+        router.replace("/dashboard");
+      }
+    })();
+  }, [params, router]);
 
-      // 👇 pass the full URL string (has ?code=...):
-      const { error } = await supabase.auth.exchangeCodeForSession(
-        window.location.href
-      );
-
-      router.replace(error ? "/login?error=1" : "/dashboard");
-    };
-
-    run();
-  }, [router]);
-
-  return <p style={{ padding: 24 }}>Bezig met inloggen…</p>;
+  return <p style={{ padding: 24 }}>Logging you in…</p>;
 }
