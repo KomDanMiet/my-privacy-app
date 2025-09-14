@@ -1,0 +1,89 @@
+=== FILE: app/auth/callback/route.ts ===
+export const runtime = "nodejs";
+
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+
+export async function GET(req: Request) {
+const url = new URL(req.url);
+const code = url.searchParams.get("code");
+const next = url.searchParams.get("next") || "/";
+
+// Als er geen code is: terug naar home, zonder drama.
+if (!code) {
+return NextResponse.redirect(new URL(next, req.url));
+}
+
+const supabase = createRouteHandlerClient({ cookies });
+try {
+// Wissel OAuth code -> session en zet cookie
+await supabase.auth.exchangeCodeForSession(code);
+} catch (err) {
+// Val terug naar debug endpoint met uitleg
+const dbg = new URL("/auth/debug", req.url);
+dbg.searchParams.set("err", (err as Error)?.message ?? "exchange_failed");
+return NextResponse.redirect(dbg);
+}
+
+return NextResponse.redirect(new URL(next, req.url));
+}
+=== END FILE ===
+
+=== FILE: app/auth/debug/route.ts ===
+export const runtime = "nodejs";
+
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+
+export async function GET(req: Request) {
+const url = new URL(req.url);
+const names = cookies().getAll().map(c => c.name);
+return NextResponse.json({
+path: url.pathname,
+search: Object.fromEntries(url.searchParams),
+cookieNames: names,
+hint: "Zoek naar sb-pkce-verifier / sb-...-auth-token. Ontbreken die? Dan komt de callback van een ander domein of login is elders gestart."
+});
+}
+=== END FILE ===
+
+=== FILE: app/login/page.tsx ===
+"use client";
+
+import { useState } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+export default function LoginPage() {
+const supabase = createClientComponentClient();
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState<string | null>(null);
+
+const signInWithGoogle = async () => {
+setError(null);
+setLoading(true);
+const { error } = await supabase.auth.signInWithOAuth({
+provider: "google",
+options: { redirectTo: ${SITE_URL}/auth/callback?next=/ }
+});
+if (error) {
+setError(error.message);
+setLoading(false);
+}
+};
+
+return (
+<main style={{ padding: 24 }}>
+<h1>Sign in</h1>
+<button onClick={signInWithGoogle} disabled={loading}>
+{loading ? "Redirecting..." : "Continue with Google"}
+</button>
+{error && <p style={{ color: "crimson" }}>{error}</p>}
+<p style={{ marginTop: 12 }}>
+Debug: <a href="/auth/debug" target="_blank">/auth/debug</a>
+</p>
+</main>
+);
+}
+=== END FILE ===

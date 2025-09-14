@@ -100,7 +100,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // privacy@ guard: alleen toestaan als ‘ie echt uit een high-confidence lookup komt
+    // privacy@ guard: alleen toestaan als 'ie echt uit een high-confidence lookup komt
     const isPrivacyGuess = to.toLowerCase().startsWith("privacy@");
     const fromLookupHighConf =
       contact?.contact_type === "email" &&

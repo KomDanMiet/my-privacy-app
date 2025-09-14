@@ -1,0 +1,140 @@
+=== FILE: package.json ===
+{
+  "name": "my-privacy-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "format": "prettier -w .",
+    "seed": "node scripts/seed.js",
+    "grok:task": "node scripts/grok/grok-task.mjs",
+    "grok:apply": "node scripts/grok/apply-file-blocks.mjs"
+  },
+  "dependencies": {
+    "@supabase/auth-helpers-nextjs": "^0.10.0",
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.57.4",
+    "@upstash/ratelimit": "^2.0.6",
+    "@upstash/redis": "^1.35.3",
+    "cheerio": "^1.1.2",
+    "googleapis": "^159.0.0",
+    "jose": "^6.1.0",
+    "next": "15.5.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "resend": "^6.0.3",
+    "svix": "^1.76.1",
+    "tldts": "^7.0.13"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/react": "19.1.12",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.0",
+    "prettier": "^3",
+    "supabase": "^2.40.7",
+    "tailwindcss": "^4"
+  }
+  }
+=== END FILE ===
+
+=== FILE: tsconfig.json ===
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmit": true,
+    "incremental": true,
+    "module": "esnext",
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    ".next/types/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
+
+=== END FILE ===
+
+=== FILE: next.config.mjs ===
+// next.config.mjs
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  webpack: (config) => {
+    // Zorg dat '@' altijd naar de projectroot wijst (ongeacht ts/jsconfig)
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    config.resolve.alias["/"] ||= __dirname;   // optioneel
+    config.resolve.alias["@"] = __dirname;     // <-- belangrijk
+    return config;
+  },
+};
+
+export default nextConfig;
+
+=== END FILE ===
+
+=== FILE: vercel.json ===
+{
+  "crons": [{
+    "path": "/api/cron",
+    "schedule": "0 4 * * *"
+  }]
+}
+=== END FILE ===
+
+=== FILE: app/api/version/route.ts ===
+export const runtime = "nodejs";
+
+import { NextResponse } from "next/server";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
+export async function GET() {
+  const pkgPath = path.join(process.cwd(), "package.json");
+  const pkg = JSON.parse(await fs.readFile(pkgPath, "utf8"));
+  return NextResponse.json({ version: pkg.version });
+}
+
+=== END FILE ===
+
+=== FILE: docs/context-pack/TASK_TEMPLATE.md ===
+# Task Template for LLM
+## Outputformaat (VERPLICHT)
+=== FILE: relative/path ===
+<content>
+=== END FILE ===
+
+=== END FILE ===

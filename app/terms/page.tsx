@@ -17,9 +17,9 @@ export default function TermsPage() {
       </p>
 
       <p className="mb-4">
-        These Terms of Service (“Terms”) govern your access to and use of Disco
-        Druif (“we”, “us”, “our”) and the services offered at{" "}
-        <span className="font-mono">discodruif.com</span> (the “Service”).
+        These Terms of Service ("Terms") govern your access to and use of Disco
+        Druif ("we", "us", "our") and the services offered at{" "}
+        <span className="font-mono">discodruif.com</span> (the "Service").
         By using the Service, you agree to these Terms.
       </p>
 
@@ -28,7 +28,7 @@ export default function TermsPage() {
         <li>
           The Service helps you discover which companies may hold your personal
           data and to compose/send Data Subject Access/Deletion Requests
-          (“DSARs”) on your behalf.
+          ("DSARs") on your behalf.
         </li>
         <li>
           Optional: you may connect your Google account with the{" "}
@@ -65,7 +65,7 @@ export default function TermsPage() {
         </li>
         <li>
           Gmail connection (optional) uses <code>gmail.readonly</code>. We read
-          lightweight metadata (e.g. “From”, Return-Path, domain) to detect
+          lightweight metadata (e.g. "From", Return-Path, domain) to detect
           companies. We do not store message bodies or attachments. You can
           revoke access any time in your Google Account.
         </li>
@@ -98,7 +98,7 @@ export default function TermsPage() {
       </h2>
       <ul className="list-disc pl-6 space-y-2">
         <li>
-          THE SERVICE IS PROVIDED “AS IS” WITHOUT WARRANTIES OF ANY KIND. We do
+          THE SERVICE IS PROVIDED "AS IS" WITHOUT WARRANTIES OF ANY KIND. We do
           not guarantee outcomes, delivery, or responses from recipients.
         </li>
         <li>
@@ -137,7 +137,7 @@ export default function TermsPage() {
 
       <h2 className="text-xl font-semibold mt-8 mb-3">10. Changes</h2>
       <p>
-        We may update these Terms; we’ll post the new version here and update
+        We may update these Terms; we'll post the new version here and update
         the date above.
       </p>
     </main>

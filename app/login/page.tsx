@@ -1,42 +1,39 @@
-// app/login/page.tsx
 "use client";
 
-import Link from "next/link";
-import { useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
 export default function LoginPage() {
-  const router = useRouter();
-  const sp = useSearchParams();
-  const err = sp.get("error");
+  const supabase = createClientComponentClient();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  // If someone lands here with ?code=, forward to the server callback
-  useEffect(() => {
-    const code = sp.get("code");
-    if (code) {
-      router.replace(`/auth/callback?code=${encodeURIComponent(code)}`);
+  const signInWithGoogle = async () => {
+    setError(null);
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      // Geen backticks, geen ${} — gewoon concat
+      options: { redirectTo: SITE_URL + "/auth/callback?next=/" }
+    });
+    if (error) {
+      setError(error.message);
+      setLoading(false);
     }
-  }, [sp, router]);
-
-  if (err) {
-    return (
-      <main style={{ padding: 24 }}>
-        <h1>Sign in</h1>
-        <p style={{ color: "#b91c1c" }}>Error: {err}</p>
-        <Link href="/login">Try again</Link>
-      </main>
-    );
-  }
+  };
 
   return (
     <main style={{ padding: 24 }}>
-      <nav style={{ marginBottom: 16 }}>
-        <Link href="/" style={{ marginRight: 12 }}>
-          Home
-        </Link>
-        <Link href="/login">Sign in</Link>
-      </nav>
-      <p>Finishing sign-in…</p>
+      <h1>Sign in</h1>
+      <button onClick={signInWithGoogle} disabled={loading}>
+        {loading ? "Redirecting..." : "Continue with Google"}
+      </button>
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      <p style={{ marginTop: 12 }}>
+        Debug: <a href="/auth/debug" target="_blank">/auth/debug</a>
+      </p>
     </main>
   );
 }

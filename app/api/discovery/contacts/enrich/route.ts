@@ -34,7 +34,7 @@ function normEmail(e: string) {
 async function distinctDomainsForEmail(email: string, maxRows = 2000) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // haal “platte” lijst en dedup in code (makkelijkst)
+  // haal "platte" lijst en dedup in code (makkelijkst)
   const { data, error } = await sb
     .from("discovered_senders")
     .select("domain")

@@ -15,7 +15,7 @@ export default async function SettingsPage() {
       <main style={{ padding: 24 }}>
         <h1>Settings</h1>
         <p>
-          You’re not signed in. <Link href="/auth/signin">Sign in</Link>
+          You're not signed in. <Link href="/auth/signin">Sign in</Link>
         </p>
       </main>
     );

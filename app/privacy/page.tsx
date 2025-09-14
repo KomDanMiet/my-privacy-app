@@ -16,9 +16,9 @@ export default function PrivacyPolicyPage() {
       </p>
 
       <p className="mb-4">
-        Disco Druif (“we”, “us”, “our”) helps you discover which companies may
+        Disco Druif ("we", "us", "our") helps you discover which companies may
         hold your personal data and lets you send data subject access or
-        deletion requests (“DSARs”). This policy explains what we collect, why,
+        deletion requests ("DSARs"). This policy explains what we collect, why,
         and your choices.
       </p>
 
@@ -37,7 +37,7 @@ export default function PrivacyPolicyPage() {
           <strong>Gmail discovery (optional):</strong> if you connect Gmail,
           we request the read-only scope{" "}
           <code>gmail.readonly</code>. We only read lightweight metadata to
-          detect sender domains (e.g. “From” / “Return-Path” headers) and never
+          detect sender domains (e.g. "From" / "Return-Path" headers) and never
           store or process message bodies. You can revoke access at any time in
           your Google Account.
         </li>
@@ -107,7 +107,7 @@ export default function PrivacyPolicyPage() {
 
       <h2 className="text-xl font-semibold mt-8 mb-3">Changes</h2>
       <p>
-        We may update this policy; we’ll post the new version here and adjust
+        We may update this policy; we'll post the new version here and adjust
         the effective date above.
       </p>
     </main>

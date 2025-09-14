@@ -1,0 +1,10 @@
+[
+"package.json",
+"tsconfig.json",
+"next.config.mjs",
+"vercel.json",
+"app/api/version/route.ts",
+"app/api/health/route.ts",
+"lib/log.ts",
+"docs/context-pack/TASK_TEMPLATE.md"
+]

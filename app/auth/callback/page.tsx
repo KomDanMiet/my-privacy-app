@@ -5,7 +5,7 @@ import Link from "next/link";
 import { createBrowserClient } from "@supabase/ssr";
 
 export default function AuthCallback() {
-  const [msg, setMsg] = useState("Finishing sign-in…");
+  const [msg, setMsg] = useState("Finishing sign-in...");
 
   useEffect(() => {
     const run = async () => {

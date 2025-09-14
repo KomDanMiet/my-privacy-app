@@ -203,7 +203,7 @@ export default async function Results({ searchParams }) {
     {/* 2) Auto scan when token exists but we have no results yet */}
     {gmailStatus.hasToken && !hasAny && !gmailStatus.scannedAt && (
       <div style={{ marginTop: 12 }}>
-        <div>Geen resultaten gevonden… We starten nu een scan…</div>
+        <div>Geen resultaten gevonden... We starten nu een scan...</div>
         <AutoScanAndReload email={email} />
       </div>
     )}

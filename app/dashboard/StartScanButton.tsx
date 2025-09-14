@@ -46,7 +46,7 @@ export default function StartScanButton() {
           opacity: loading ? 0.7 : 1,
         }}
       >
-        {loading ? "Scanning…" : "Scan Gmail"}
+        {loading ? "Scanning..." : "Scan Gmail"}
       </button>
       {msg && <p style={{ color: "#065f46", marginTop: 8 }}>{msg}</p>}
       {err && <p style={{ color: "#b91c1c", marginTop: 8 }}>{err}</p>}
