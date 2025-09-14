@@ -1,41 +1,65 @@
-export const runtime = "nodejs";
+// app/api/gmail/status/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+import type { Database } from "@/types/supabase";
 
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export async function GET(req: Request) {
-  const email = new URL(req.url).searchParams.get("email")?.toLowerCase().trim();
+export async function GET() {
   try {
-    const sb = createClient(SUPABASE_URL, KEY);
+    // Next 15: cookies() is async
+    const jar = await cookies();
 
-    const { data, error } = await sb
-      .from("gmail_tokens")
-      .select("token_json, scanned_at")
-      .eq("email", email)
-      .maybeSingle();
-    console.log("[status] row:", data, error);
-    if (error) throw error;
+    const supabase = createServerClient<Database>(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getCookie: (name: string) => jar.get(name)?.value ?? null,
+          setCookie: (name: string, value: string, options?: any) =>
+            jar.set({ name, value, ...(options ?? {}) }),
+          deleteCookie: (name: string, options?: any) =>
+            jar.set({ name, value: "", ...(options ?? {}) }),
+        },
+      }
+    );
 
-    if (!data) {
-      return NextResponse.json({ ok: true, hasToken: false, isFresh: false, scannedAt: null });
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json(
+        { connected: false, reason: "not_signed_in" },
+        { status: 200 }
+      );
     }
 
-    // token_json may be JSON or string
-    const raw = data.token_json;
-    const obj = typeof raw === "string" ? JSON.parse(raw || "{}") : (raw || {});
-    const expiry = Number(obj?.expiry_date ?? 0);
-    const isFresh = expiry > Date.now();
+    // If your Database type doesn't include gmail_tokens yet, cast to any
+    const { data: tok, error } = (supabase as any)
+      .from("gmail_tokens")
+      .select("email")
+      .eq("user_id", user.id)
+      .maybeSingle();
 
-    return NextResponse.json({
-      ok: true,
-      hasToken: true,
-      isFresh,
-      scannedAt: data.scanned_at ?? null,
-    });
-  } catch (e: any) {
-    console.error("[status] error:", e);
-    return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json(
+        { connected: false, reason: "db_error" },
+        { status: 200 }
+      );
+    }
+
+    const connected = !!tok;
+    return NextResponse.json(
+      { connected, email: tok?.email ?? null },
+      { status: 200 }
+    );
+  } catch {
+    return NextResponse.json(
+      { connected: false, reason: "unknown" },
+      { status: 200 }
+    );
   }
 }

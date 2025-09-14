@@ -5,23 +5,21 @@ import Link from "next/link";
 
 export default function DashboardPage() {
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    async function checkConnection() {
+    (async () => {
       try {
-        const res = await fetch("/api/gmail/status"); // <-- you must implement this API
+        const res = await fetch("/api/gmail/status", { cache: "no-store" });
         const data = await res.json();
-        setGmailConnected(data.connected);
-      } catch (err) {
+        setGmailConnected(!!data.connected);
+      } catch {
         setGmailConnected(false);
       }
-    }
-    checkConnection();
+    })();
   }, []);
 
-  if (gmailConnected === null) {
-    return <p style={{ padding: 24 }}>Loading...</p>;
-  }
+  if (gmailConnected === null) return <p style={{ padding: 24 }}>Loading…</p>;
 
   if (!gmailConnected) {
     return (
@@ -46,15 +44,28 @@ export default function DashboardPage() {
     );
   }
 
+  const runScan = async () => {
+    try {
+      setBusy(true);
+      const res = await fetch("/api/gmail/scan", { method: "POST" }); // <-- POST!
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j?.error || "Scan failed");
+        return;
+      }
+      alert(`Scan complete. Unique domains: ${j.unique_domains ?? "?"}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <main style={{ padding: 24, fontFamily: "sans-serif" }}>
       <h1>Dashboard</h1>
-      <p>✅ Gmail is connected. You can now scan for companies!</p>
+      <p>✅ Gmail is connected. You can now scan for companies.</p>
       <button
-        onClick={async () => {
-          await fetch("/api/gmail/scan");
-          alert("Scanning started...");
-        }}
+        onClick={runScan}
+        disabled={busy}
         style={{
           padding: "10px 16px",
           borderRadius: 6,
@@ -62,9 +73,10 @@ export default function DashboardPage() {
           color: "white",
           border: "none",
           marginTop: 12,
+          opacity: busy ? 0.7 : 1,
         }}
       >
-        Scan Gmail
+        {busy ? "Scanning…" : "Scan Gmail"}
       </button>
     </main>
   );
