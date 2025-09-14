@@ -57,23 +57,24 @@ export async function GET(req: NextRequest) {
   const connectedEmail: string | undefined =
     (profile?.email as string | undefined) ?? (tokenJson.id_token ? decodeEmailFromIdToken(tokenJson.id_token) : undefined);
 
-  // 3) Who is logged in? Bind SSR client to cookies (getAll/setAll)
-  const jar = await cookies();
-  const supaSSR = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () =>
-          jar.getAll().map((c) => ({ name: c.name, value: c.value })),
-        setAll: (list) => {
-          list.forEach(({ name, value, ...options }) => {
-            jar.set({ name, value, ...(options as any) });
-          });
-        },
+ // 3) Who is logged in? Bind SSR client to cookies (getAll/setAll)
+const jar = await cookies(); // ✅ await in Route Handlers (Next 15)
+
+const supaSSR = createServerClient<Database>(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    cookies: {
+      getAll: () =>
+        jar.getAll().map((c) => ({ name: c.name, value: c.value })),
+      setAll: (list) => {
+        list.forEach(({ name, value, ...options }) => {
+          jar.set({ name, value, ...(options as any) });
+        });
       },
-    }
-  );
+    },
+  }
+);
 
   const { data: { user } } = await supaSSR.auth.getUser();
   if (!user) return NextResponse.redirect(new URL(`/settings?error=no_user`, u.origin));
