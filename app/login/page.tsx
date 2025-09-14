@@ -1,58 +1,41 @@
 // app/login/page.tsx
+// A lean page that handles magic-link fallback and shows status.
 "use client";
 
-import { useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const sp = useSearchParams();
+  const err = sp.get("error");
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setMsg(null);
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-    });
-    setLoading(false);
-    if (error) setMsg(error.message);
-    else setMsg("Check your inbox for the magic link.");
+  // If someone still lands here with a ?code= (e.g., old redirect),
+  // forward them to /auth/callback so the server can exchange cookies.
+  useEffect(() => {
+    const code = sp.get("code");
+    if (code) {
+      router.replace(`/auth/callback?code=${encodeURIComponent(code)}`);
+    }
+  }, [sp, router]);
+
+  if (err) {
+    return (
+      <main style={{ padding: 24 }}>
+        <h1>Sign in</h1>
+        <p style={{ color: "#b91c1c" }}>Error: {err}</p>
+        <a href="/login">Try again</a>
+      </main>
+    );
   }
 
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 420, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Log in</h1>
-      <p style={{ opacity: 0.8, marginBottom: 16 }}>
-        Enter your email and we’ll send you a magic login link.
-      </p>
-
-      <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
-          required
-          style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db" }}
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          style={{ padding: "10px 12px", borderRadius: 8, background: "#0ea5e9", color: "#fff", border: "none" }}
-        >
-          {loading ? "Sending..." : "Send magic link"}
-        </button>
-      </form>
-
-      {msg && <p style={{ marginTop: 12 }}>{msg}</p>}
+    <main style={{ padding: 24 }}>
+      <nav style={{ marginBottom: 16 }}>
+        <a href="/" style={{ marginRight: 12 }}>Home</a>
+        <a href="/login">Sign in</a>
+      </nav>
+      <p>Finishing sign-in…</p>
     </main>
   );
 }

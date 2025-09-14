@@ -5,20 +5,15 @@ import { getSupabaseInRoute } from "@/lib/supabaseServer";
 export const runtime = "nodejs";
 
 export async function GET() {
-  // Create SSR client with response-bound cookies
   const res = NextResponse.next();
-  const supaSSR = await getSupabaseInRoute(res);
+  const supabase = await getSupabaseInRoute(res);
 
-  // Start OAuth with Supabase Auth (Google)
-  const { data, error } = await supaSSR.auth.signInWithOAuth({
+  const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      // Adjust scopes as needed for Gmail API
       scopes:
-        "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.readonly",
-      // After Google redirects back, Supabase will handle session cookies
-      // Set to your app URL/page that finalizes and stores tokens in gmail_tokens
-      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/login`,
+        "openid email profile https://www.googleapis.com/auth/gmail.readonly",
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,
     },
   });
 
@@ -29,6 +24,5 @@ export async function GET() {
     );
   }
 
-  // Redirect the user to Google's consent screen
   return NextResponse.redirect(data.url);
 }
