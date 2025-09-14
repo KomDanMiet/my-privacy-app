@@ -1,28 +1,32 @@
 // app/api/gmail/start/route.ts
-import { NextResponse } from "next/server";
-import { getSupabaseInRoute } from "@/lib/supabaseServer";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-export async function GET() {
-  const res = NextResponse.next();
-  const supabase = await getSupabaseInRoute(res);
+export async function GET(req: NextRequest) {
+  const origin =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    `${req.nextUrl.protocol}//${req.nextUrl.host}`;
 
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      scopes:
-        "openid email profile https://www.googleapis.com/auth/gmail.readonly",
-      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,
-    },
+  const redirectUri = `${origin.replace(/\/$/, "")}/api/gmail/callback`;
+
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID!,           // your Google OAuth Client ID
+    response_type: "code",
+    access_type: "offline",                             // get refresh_token
+    prompt: "consent",                                  // force refresh_token each time
+    include_granted_scopes: "true",
+    scope: [
+      "openid",
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ].join(" "),
+    redirect_uri: redirectUri,
+    // Optional: state for CSRF protection
+    // state: crypto.randomUUID(),
   });
 
-  if (error || !data?.url) {
-    return NextResponse.json(
-      { error: error?.message || "Could not start Google OAuth" },
-      { status: 500 }
-    );
-  }
-
-  return NextResponse.redirect(data.url);
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  return NextResponse.redirect(url);
 }
