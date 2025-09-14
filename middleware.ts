@@ -18,17 +18,17 @@ export async function middleware(req: NextRequest) {
         getAll() {
           return req.cookies.getAll();
         },
-        setAll(cookies) {
-          cookies.forEach(({ name, value, ...options }) => {
-            res.cookies.set({ name, value, ...options });
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            res.cookies.set(name, value, options);
           });
         },
       },
     }
   );
 
-  // Touch auth so Supabase can refresh cookies when needed
-  await supabase.auth.getUser().catch(() => {});
+  // Touch session so Supabase can refresh cookies when needed
+  await supabase.auth.getSession();
 
   return res;
 }
