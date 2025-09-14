@@ -1,25 +1,34 @@
 // app/api/gmail/start/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { getSupabaseInRoute } from "@/lib/supabaseServer";
 
-const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
-const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/userinfo.email",
-].join(" ");
+export const runtime = "nodejs";
 
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const site = process.env.NEXT_PUBLIC_SITE_URL || url.origin;
-  const redirect_uri = `${site.replace(/\/$/, "")}/api/gmail/callback`;
+export async function GET() {
+  // Create SSR client with response-bound cookies
+  const res = NextResponse.next();
+  const supaSSR = await getSupabaseInRoute(res);
 
-  const authUrl = new URL(GOOGLE_AUTH);
-  authUrl.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID!);
-  authUrl.searchParams.set("redirect_uri", redirect_uri);
-  authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("access_type", "offline");
-  authUrl.searchParams.set("prompt", "consent"); // ensure refresh_token
-  authUrl.searchParams.set("scope", SCOPES);
-  // Optionally pass state=… if you want CSRF protection
+  // Start OAuth with Supabase Auth (Google)
+  const { data, error } = await supaSSR.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      // Adjust scopes as needed for Gmail API
+      scopes:
+        "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.readonly",
+      // After Google redirects back, Supabase will handle session cookies
+      // Set to your app URL/page that finalizes and stores tokens in gmail_tokens
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/login`,
+    },
+  });
 
-  return NextResponse.redirect(authUrl.toString(), { status: 302 });
+  if (error || !data?.url) {
+    return NextResponse.json(
+      { error: error?.message || "Could not start Google OAuth" },
+      { status: 500 }
+    );
+  }
+
+  // Redirect the user to Google's consent screen
+  return NextResponse.redirect(data.url);
 }

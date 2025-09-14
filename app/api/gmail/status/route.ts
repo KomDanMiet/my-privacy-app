@@ -1,65 +1,38 @@
 // app/api/gmail/status/route.ts
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/supabase";
+import { getSupabaseInRoute } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const sb = createClient<Database>(SUPABASE_URL, SERVICE_KEY);
+
 export async function GET() {
-  // Next 15: cookies() is async
-  const jar = await cookies();
+  const res = NextResponse.json({ connected: false });
+  const supaSSR = await getSupabaseInRoute(res);
 
-  // Bind Supabase to request cookies
-  const supabase = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
-    {
-      cookies: {
-        getAll: () => jar.getAll().map((c) => ({ name: c.name, value: c.value })),
-        setAll: (list) => {
-          // Needed so Supabase can refresh the session cookie if it’s stale
-          list.forEach(({ name, value, ...options }) => {
-            jar.set({ name, value, ...(options as any) });
-          });
-        },
-      },
-    }
-  );
-
-  // 1) Who is signed in?
   const {
     data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
+  } = await supaSSR.auth.getUser();
 
-  if (userErr || !user) {
-    return NextResponse.json(
-      { connected: false, email: null, reason: "not_authenticated" },
-      { status: 401 }
-    );
+  if (!user) {
+    return NextResponse.json({ connected: false }, { status: 401 });
   }
 
-  // 2) Check if a gmail_tokens row exists for this user
-  const { data: row, error } = await supabase
+  // Check if gmail_tokens exists for this user
+  const { data, error } = await sb
     .from("gmail_tokens")
-    .select("email")
+    .select("user_id")
     .eq("user_id", user.id)
     .maybeSingle();
 
   if (error) {
-    // If your RLS policy on gmail_tokens is too strict, you'll hit this path.
-    // Loosen RLS to: SELECT where user_id = auth.uid()
-    return NextResponse.json(
-      { connected: false, email: null, reason: "select_failed" },
-      { status: 200 }
-    );
+    return NextResponse.json({ connected: false }, { status: 500 });
   }
 
-  return NextResponse.json({
-    connected: !!row?.email,
-    email: row?.email ?? null,
-    reason: row?.email ? "ok" : "not_connected",
-  });
+  return NextResponse.json({ connected: !!data });
 }

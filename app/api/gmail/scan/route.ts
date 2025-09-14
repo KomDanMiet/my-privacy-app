@@ -1,14 +1,13 @@
 // app/api/gmail/scan/route.ts
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import type { Database, TablesInsert } from "@/types/supabase";
+import { getSupabaseInRoute } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Service client (service role) for DB writes
+// ----- Service-role client for DB writes (never expose to client) -----
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const sb = createClient<Database>(SUPABASE_URL, SERVICE_KEY);
@@ -21,29 +20,22 @@ type GoogleToken = {
   access_token: string;
   refresh_token?: string;
   expiry_date?: number; // ms epoch
-  expires_in?: number;  // seconds when freshly refreshed
+  expires_in?: number;  // seconds (fresh refresh)
 };
 
 export async function POST() {
+  const res = NextResponse.json({ ok: true }); // we'll overwrite body later if needed
   try {
-    // Next 15: cookies() is async in route handlers
-    const cookieStore = await cookies();
-
-    // SSR client bound to request cookies (for reading the logged-in user)
-    const supaSSR = createServerClient<Database>(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: cookieStore,
-      }
-    );
+    // SSR Supabase bound to request/response cookies (so refresh tokens can be set)
+    const supaSSR = await getSupabaseInRoute(res);
 
     // ---- get the authenticated user ----
     const {
       data: { user },
+      error: userErr,
     } = await supaSSR.auth.getUser();
 
-    if (!user) {
+    if (userErr || !user) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
     const userId = user.id;
@@ -68,15 +60,15 @@ export async function POST() {
 
     // ---- helpers ----
     const doGmail = async (url: string, init: RequestInit, attempt = 0): Promise<Response> => {
-      const res = await fetch(url, init);
-      if (res.status === 429 || res.status >= 500) {
-        if (attempt >= 3) return res;
+      const r = await fetch(url, init);
+      if (r.status === 429 || r.status >= 500) {
+        if (attempt >= 3) return r;
         const retryAfter =
-          Number(res.headers.get("retry-after")) || Math.min(2 ** attempt * 300, 2000);
-        await new Promise((r) => setTimeout(r, retryAfter));
+          Number(r.headers.get("retry-after")) || Math.min(2 ** attempt * 300, 2000);
+        await new Promise((ok) => setTimeout(ok, retryAfter));
         return doGmail(url, init, attempt + 1);
       }
-      return res;
+      return r;
     };
 
     const tryRefresh = async () => {
@@ -137,13 +129,13 @@ export async function POST() {
       if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
       listUrl.searchParams.set("fields", "messages/id,nextPageToken");
 
-      let res = await doGmail(listUrl.toString(), { headers: authHeaders(accessToken) });
-      if (res.status === 401 && (await tryRefresh())) {
-        res = await doGmail(listUrl.toString(), { headers: authHeaders(accessToken) });
+      let r = await doGmail(listUrl.toString(), { headers: authHeaders(accessToken) });
+      if (r.status === 401 && (await tryRefresh())) {
+        r = await doGmail(listUrl.toString(), { headers: authHeaders(accessToken) });
       }
-      if (!res.ok) break;
+      if (!r.ok) break;
 
-      const j = (await res.json()) as { messages?: { id: string }[]; nextPageToken?: string };
+      const j = (await r.json()) as { messages?: { id: string }[]; nextPageToken?: string };
       const ids = j.messages?.map((m) => m.id) ?? [];
       pageToken = j.nextPageToken;
 
@@ -153,13 +145,13 @@ export async function POST() {
         msgUrl.searchParams.set("metadataHeaders", "From");
         msgUrl.searchParams.set("fields", "id,payload/headers");
 
-        let r = await doGmail(msgUrl.toString(), { headers: authHeaders(accessToken) });
-        if (r.status === 401 && (await tryRefresh())) {
-          r = await doGmail(msgUrl.toString(), { headers: authHeaders(accessToken) });
+        let r2 = await doGmail(msgUrl.toString(), { headers: authHeaders(accessToken) });
+        if (r2.status === 401 && (await tryRefresh())) {
+          r2 = await doGmail(msgUrl.toString(), { headers: authHeaders(accessToken) });
         }
-        if (!r.ok) continue;
+        if (!r2.ok) continue;
 
-        const msg = (await r.json()) as any;
+        const msg = (await r2.json()) as any;
         const from = msg?.payload?.headers?.find((h: any) => h.name === "From")?.value || "";
         const d = extractDomain(from);
         if (d) domains.push(d);
@@ -183,7 +175,7 @@ export async function POST() {
       await sb.from("discovered_senders").upsert(rows, { onConflict: "user_id,domain" });
     }
 
-    // ---- update scan meta (if you have this table) ----
+    // ---- update scan meta (optional) ----
     await sb
       .from("gmail_scan_meta")
       .upsert(
