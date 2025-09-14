@@ -20,8 +20,8 @@ export default async function SettingsPage() {
   const { data: tok } = await supabase
     .from("gmail_tokens")
     .select("email")
-    .eq("user_id", user.id)     {/* <-- MUST match user_id */}
-    .maybeSingle();
+    .eq("user_id", user.id)
+    .maybeSingle(); // <- correct chaining
 
   return (
     <main style={{ padding: 24 }}>

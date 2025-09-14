@@ -5,10 +5,6 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/supabase";
 
-/**
- * We use the Service Role to write tokens (bypass RLS),
- * and the SSR client (bound to cookies) to know WHICH user is logged in.
- */
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const sbService = createClient<Database>(SUPABASE_URL, SERVICE_KEY);
@@ -16,34 +12,27 @@ const sbService = createClient<Database>(SUPABASE_URL, SERVICE_KEY);
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO = "https://www.googleapis.com/oauth2/v2/userinfo";
 
-/** Shape we’ll store in gmail_tokens.token_json */
 type GoogleTokenBundle = {
   access_token: string;
   refresh_token?: string;
   scope?: string;
   token_type?: string;
-  expiry_date?: number; // ms since epoch
-  raw?: unknown;        // keep the original response too (optional)
+  expiry_date?: number;
+  raw?: unknown;
 };
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const code = url.searchParams.get("code");
-  const error = url.searchParams.get("error");
+  const u = new URL(req.url);
+  const code = u.searchParams.get("code");
+  const error = u.searchParams.get("error");
 
-  // If Google returned an error, bounce back to settings
-  if (error) {
-    return NextResponse.redirect(new URL(`/settings?error=${encodeURIComponent(error)}`, url.origin));
-  }
-  if (!code) {
-    return NextResponse.redirect(new URL(`/settings?error=no_code`, url.origin));
-  }
+  if (error) return NextResponse.redirect(new URL(`/settings?error=${encodeURIComponent(error)}`, u.origin));
+  if (!code) return NextResponse.redirect(new URL(`/settings?error=no_code`, u.origin));
 
-  // Build redirect_uri exactly as Google received it in /api/gmail/start
-  const site = process.env.NEXT_PUBLIC_SITE_URL || url.origin;
+  const site = process.env.NEXT_PUBLIC_SITE_URL || u.origin;
   const redirect_uri = `${site.replace(/\/$/, "")}/api/gmail/callback`;
 
-  // --- 1) Exchange the code for tokens (Google) -----------------------------
+  // 1) Exchange code -> tokens
   const tokenRes = await fetch(GOOGLE_TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -55,61 +44,47 @@ export async function GET(req: NextRequest) {
       client_secret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
   });
-
   const tokenJson = await tokenRes.json();
   if (!tokenRes.ok || !tokenJson?.access_token) {
-    return NextResponse.redirect(
-      new URL(`/settings?error=token_exchange_failed`, url.origin),
-    );
+    return NextResponse.redirect(new URL(`/settings?error=token_exchange_failed`, u.origin));
   }
 
-  const accessToken: string = tokenJson.access_token as string;
-
-  // --- 2) Get the Gmail account's email (profile) ---------------------------
+  // 2) Get Gmail email
   const profileRes = await fetch(GOOGLE_USERINFO, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Bearer ${tokenJson.access_token as string}` },
   });
   const profile = await profileRes.json().catch(() => null);
-
   const connectedEmail: string | undefined =
-    (profile && (profile.email as string)) ||
-    (tokenJson.id_token ? decodeEmailFromIdToken(tokenJson.id_token) : undefined);
+    (profile?.email as string | undefined) ?? (tokenJson.id_token ? decodeEmailFromIdToken(tokenJson.id_token) : undefined);
 
-  // --- 3) Figure out WHICH Supabase user is logged in ----------------------
+  // 3) Who is logged in? Bind SSR client to cookies (getAll/setAll)
   const jar = await cookies();
   const supaSSR = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get: (name: string) => jar.get(name)?.value,
-        set: (name: string, value: string, options: any) =>
-          jar.set({ name, value, ...(options ?? {}) }),
-        remove: (name: string, options: any) =>
-          jar.set({ name, value: "", ...(options ?? {}) }),
+        getAll: () =>
+          jar.getAll().map((c) => ({ name: c.name, value: c.value })),
+        setAll: (list) => {
+          list.forEach(({ name, value, ...options }) => {
+            jar.set({ name, value, ...(options as any) });
+          });
+        },
       },
     }
   );
 
-  const {
-    data: { user },
-    error: userErr,
-  } = await supaSSR.auth.getUser();
+  const { data: { user } } = await supaSSR.auth.getUser();
+  if (!user) return NextResponse.redirect(new URL(`/settings?error=no_user`, u.origin));
 
-  if (userErr || !user) {
-    return NextResponse.redirect(new URL(`/settings?error=no_user`, url.origin));
-  }
-
-  // --- 4) Persist tokens tied to THIS user_id -------------------------------
+  // 4) Save tokens for THIS user
   const bundle: GoogleTokenBundle = {
-    access_token: accessToken,
+    access_token: tokenJson.access_token as string,
     refresh_token: tokenJson.refresh_token,
     scope: tokenJson.scope,
     token_type: tokenJson.token_type,
-    expiry_date:
-      typeof tokenJson.expires_in === "number"
-        ? Date.now() + tokenJson.expires_in * 1000
-        : undefined,
+    expiry_date: typeof tokenJson.expires_in === "number" ? Date.now() + tokenJson.expires_in * 1000 : undefined,
     raw: tokenJson,
   };
 
@@ -117,24 +92,21 @@ export async function GET(req: NextRequest) {
     .from("gmail_tokens")
     .upsert(
       {
-        user_id: user.id,                 // ✅ IMPORTANT: store user_id
+        user_id: user.id,               // ✅ now stored
         email: connectedEmail ?? "",
         token_json: bundle as any,
       },
-      { onConflict: "user_id" }           // one row per signed-in user
+      { onConflict: "user_id" }
     );
 
   if (upsertErr) {
-    // Optional: log to Vercel logs
     console.error("gmail_tokens upsert error:", upsertErr);
-    return NextResponse.redirect(new URL(`/settings?error=save_failed`, url.origin));
+    return NextResponse.redirect(new URL(`/settings?error=save_failed`, u.origin));
   }
 
-  // --- 5) Done: back to settings (or dashboard) -----------------------------
-  return NextResponse.redirect(new URL(`/settings?gmail=connected`, url.origin));
+  return NextResponse.redirect(new URL(`/settings?gmail=connected`, u.origin));
 }
 
-/** Best-effort parse of email from an ID token (when userinfo fails). */
 function decodeEmailFromIdToken(idToken: string): string | undefined {
   try {
     const payload = idToken.split(".")[1];
