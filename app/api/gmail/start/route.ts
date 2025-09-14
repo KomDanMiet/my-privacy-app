@@ -1,45 +1,25 @@
 // app/api/gmail/start/route.ts
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-
+const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
-  "openid",
-  "email",
-  "profile",
+  "https://www.googleapis.com/auth/userinfo.email",
 ].join(" ");
 
-export async function GET(req: Request) {
-  // Build redirect_uri from the request origin (no env needed)
-  const origin = new URL(req.url).origin;
-  const redirectUri = `${origin}/api/gmail/callback`;
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const site = process.env.NEXT_PUBLIC_SITE_URL || url.origin;
+  const redirect_uri = `${site.replace(/\/$/, "")}/api/gmail/callback`;
 
-  // CSRF: create and store state
-  const state = crypto.randomUUID();
-  const jar = await cookies();
-  jar.set({
-    name: "gmail_oauth_state",
-    value: state,
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax",
-    secure: origin.startsWith("https://"),
-    maxAge: 60 * 10, // 10 min
-  });
+  const authUrl = new URL(GOOGLE_AUTH);
+  authUrl.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID!);
+  authUrl.searchParams.set("redirect_uri", redirect_uri);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("access_type", "offline");
+  authUrl.searchParams.set("prompt", "consent"); // ensure refresh_token
+  authUrl.searchParams.set("scope", SCOPES);
+  // Optionally pass state=… if you want CSRF protection
 
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: process.env.GOOGLE_CLIENT_ID!,
-    redirect_uri: redirectUri,
-    scope: SCOPES,
-    access_type: "offline",      // ask for refresh_token
-    prompt: "consent",           // force consent to ensure refresh_token on first connect
-    include_granted_scopes: "true",
-    state,
-  });
-
-  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-  return NextResponse.redirect(authUrl, { status: 302 });
+  return NextResponse.redirect(authUrl.toString(), { status: 302 });
 }

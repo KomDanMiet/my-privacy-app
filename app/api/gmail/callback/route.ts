@@ -1,100 +1,146 @@
 // app/api/gmail/callback/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createServerClient as createSSRClient } from "@supabase/ssr";
-import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/supabase";
 
-export const runtime = "nodejs";
-
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+/**
+ * We use the Service Role to write tokens (bypass RLS),
+ * and the SSR client (bound to cookies) to know WHICH user is logged in.
+ */
+const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const sbService = createClient<Database>(SUPABASE_URL, SERVICE_KEY);
 
-// Service client for DB writes (no cookies)
-const sb = createServiceClient<Database>(SUPABASE_URL, SERVICE_KEY);
+const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+const GOOGLE_USERINFO = "https://www.googleapis.com/oauth2/v2/userinfo";
 
-export async function GET(req: Request) {
+/** Shape we’ll store in gmail_tokens.token_json */
+type GoogleTokenBundle = {
+  access_token: string;
+  refresh_token?: string;
+  scope?: string;
+  token_type?: string;
+  expiry_date?: number; // ms since epoch
+  raw?: unknown;        // keep the original response too (optional)
+};
+
+export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
-  const err = url.searchParams.get("error");
-  const returnedState = url.searchParams.get("state");
+  const error = url.searchParams.get("error");
 
-  const origin = url.origin;
-  const redirectUri = `${origin}/api/gmail/callback`;
-
-  const jar = await cookies();
-  const savedState = jar.get("gmail_oauth_state")?.value || null;
-  // clear state cookie
-  jar.set({ name: "gmail_oauth_state", value: "", path: "/", maxAge: 0 });
-
-  if (err) {
-    return NextResponse.redirect(`${origin}/settings?connect_error=${encodeURIComponent(err)}`, { status: 302 });
+  // If Google returned an error, bounce back to settings
+  if (error) {
+    return NextResponse.redirect(new URL(`/settings?error=${encodeURIComponent(error)}`, url.origin));
   }
   if (!code) {
-    return NextResponse.redirect(`${origin}/settings?connect_error=no_code_in_callback`, { status: 302 });
-  }
-  if (!returnedState || !savedState || returnedState !== savedState) {
-    return NextResponse.redirect(`${origin}/settings?connect_error=state_mismatch`, { status: 302 });
+    return NextResponse.redirect(new URL(`/settings?error=no_code`, url.origin));
   }
 
-  // Exchange code for tokens
-  const body = new URLSearchParams({
-    code,
-    client_id: process.env.GOOGLE_CLIENT_ID!,
-    client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-    redirect_uri: redirectUri,
-    grant_type: "authorization_code",
-  });
-  const tr = await fetch(TOKEN_URL, { method: "POST", body });
-  const tj = await tr.json();
-  if (!tr.ok || !tj?.access_token) {
-    return NextResponse.redirect(`${origin}/settings?connect_error=token_exchange_failed`, { status: 302 });
-  }
+  // Build redirect_uri exactly as Google received it in /api/gmail/start
+  const site = process.env.NEXT_PUBLIC_SITE_URL || url.origin;
+  const redirect_uri = `${site.replace(/\/$/, "")}/api/gmail/callback`;
 
-  // Fetch user email to display
-  const ur = await fetch(USERINFO_URL, {
-    headers: { Authorization: `Bearer ${tj.access_token}` },
-  });
-  const uj = await ur.json();
-  const gmailEmail: string | undefined = uj?.email;
-
-  // Read current signed-in user (SSR client bound to cookies)
-  const supa = createSSRClient<Database>(SUPABASE_URL, ANON_KEY, {
-    cookies: {
-      get(name: string) {
-        return jar.get(name)?.value;
-      },
-      set(name: string, value: string, options?: any) {
-        jar.set({ name, value, ...(options ?? {}) });
-      },
-      remove(name: string, options?: any) {
-        jar.set({ name, value: "", ...(options ?? {}) });
-      },
-    },
+  // --- 1) Exchange the code for tokens (Google) -----------------------------
+  const tokenRes = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri,
+      client_id: process.env.GOOGLE_CLIENT_ID!,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
   });
 
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) {
-    return NextResponse.redirect(`${origin}/auth/signin?msg=please_sign_in_first`, { status: 302 });
+  const tokenJson = await tokenRes.json();
+  if (!tokenRes.ok || !tokenJson?.access_token) {
+    return NextResponse.redirect(
+      new URL(`/settings?error=token_exchange_failed`, url.origin),
+    );
   }
 
-  // Upsert Gmail token record
-  await sb
+  const accessToken: string = tokenJson.access_token as string;
+
+  // --- 2) Get the Gmail account's email (profile) ---------------------------
+  const profileRes = await fetch(GOOGLE_USERINFO, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const profile = await profileRes.json().catch(() => null);
+
+  const connectedEmail: string | undefined =
+    (profile && (profile.email as string)) ||
+    (tokenJson.id_token ? decodeEmailFromIdToken(tokenJson.id_token) : undefined);
+
+  // --- 3) Figure out WHICH Supabase user is logged in ----------------------
+  const jar = await cookies();
+  const supaSSR = createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get: (name: string) => jar.get(name)?.value,
+        set: (name: string, value: string, options: any) =>
+          jar.set({ name, value, ...(options ?? {}) }),
+        remove: (name: string, options: any) =>
+          jar.set({ name, value: "", ...(options ?? {}) }),
+      },
+    }
+  );
+
+  const {
+    data: { user },
+    error: userErr,
+  } = await supaSSR.auth.getUser();
+
+  if (userErr || !user) {
+    return NextResponse.redirect(new URL(`/settings?error=no_user`, url.origin));
+  }
+
+  // --- 4) Persist tokens tied to THIS user_id -------------------------------
+  const bundle: GoogleTokenBundle = {
+    access_token: accessToken,
+    refresh_token: tokenJson.refresh_token,
+    scope: tokenJson.scope,
+    token_type: tokenJson.token_type,
+    expiry_date:
+      typeof tokenJson.expires_in === "number"
+        ? Date.now() + tokenJson.expires_in * 1000
+        : undefined,
+    raw: tokenJson,
+  };
+
+  const { error: upsertErr } = await sbService
     .from("gmail_tokens")
     .upsert(
       {
-        user_id: user.id,
-        email: gmailEmail || "unknown",
-        token_json: tj, // contains access_token, maybe refresh_token, expiry, etc.
-        scanning: false,
-        scanned_at: null,
-      } as any,
-      { onConflict: "user_id" }
+        user_id: user.id,                 // ✅ IMPORTANT: store user_id
+        email: connectedEmail ?? "",
+        token_json: bundle as any,
+      },
+      { onConflict: "user_id" }           // one row per signed-in user
     );
 
-  return NextResponse.redirect(`${origin}/settings?connected=gmail`, { status: 302 });
+  if (upsertErr) {
+    // Optional: log to Vercel logs
+    console.error("gmail_tokens upsert error:", upsertErr);
+    return NextResponse.redirect(new URL(`/settings?error=save_failed`, url.origin));
+  }
+
+  // --- 5) Done: back to settings (or dashboard) -----------------------------
+  return NextResponse.redirect(new URL(`/settings?gmail=connected`, url.origin));
+}
+
+/** Best-effort parse of email from an ID token (when userinfo fails). */
+function decodeEmailFromIdToken(idToken: string): string | undefined {
+  try {
+    const payload = idToken.split(".")[1];
+    const json = JSON.parse(Buffer.from(payload, "base64").toString("utf8"));
+    return json?.email as string | undefined;
+  } catch {
+    return undefined;
+  }
 }
