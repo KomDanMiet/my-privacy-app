@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+// Gebruik de huidige origin in de browser; val server-side terug op env of localhost.
+const SITE_URL =
+  typeof window !== "undefined"
+    ? window.location.origin
+    : (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000");
 
 export default function LoginPage() {
   const supabase = createClientComponentClient();
@@ -15,7 +19,6 @@ export default function LoginPage() {
     setLoading(true);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      // Geen backticks, geen ${} — gewoon concat
       options: { redirectTo: SITE_URL + "/auth/callback?next=/" }
     });
     if (error) {
