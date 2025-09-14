@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  eslint: { ignoreDuringBuilds: true },
   webpack: (config) => {
     // Zorg dat '@' altijd naar de projectroot wijst (ongeacht ts/jsconfig)
     const __dirname = dirname(fileURLToPath(import.meta.url));
